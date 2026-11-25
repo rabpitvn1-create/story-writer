@@ -40,7 +40,23 @@ async function upgradeDeprecatedGeminiModels() {
   if (changed) await setSetting('apiConfig', cfg);
 }
 
+const BUILT_IN_PROXIES = [
+  { provider: 'gemini', label: 'Gemini Proxy (miễn phí)', baseUrl: 'https://backrooms-gemini-proxy-v2.onrender.com' },
+  { provider: 'claude', label: 'Premium Proxy (Claude)', baseUrl: 'https://backrooms-premium-proxy.onrender.com', model: 'occ/claude-haiku-5-5' }
+];
+
+// Proxy có sẵn trong app, không cần nhập key — thêm 1 lần, lần sau mở app thấy đã có thì thôi
+async function seedBuiltInProxies() {
+  const pool = await db.keyPool.toArray();
+  for (const p of BUILT_IN_PROXIES) {
+    if (!pool.some((k) => k.baseUrl === p.baseUrl)) {
+      await db.keyPool.add({ ...p, apiKey: '', builtIn: true, status: 'ready', cooldownUntil: null, requestsToday: 0, lastUsedAt: 0 });
+    }
+  }
+}
+
 async function initDatabase(defaultCodex, defaultSettings) {
+  await seedBuiltInProxies();
   const migrated = await getSetting('migrated_v1', false);
   if (migrated) {
     await upgradeDeprecatedGeminiModels();

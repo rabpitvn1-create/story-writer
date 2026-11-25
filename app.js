@@ -219,17 +219,21 @@ async function refreshSettingsUI() {
     meta.appendChild(title);
     meta.appendChild(status);
 
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'step-btn';
-    delBtn.textContent = 'Xóa';
-    delBtn.addEventListener('click', async () => {
-      await window.KeyPoolManager.removeKey(item.id);
-      await refreshSettingsUI();
-    });
-
     li.appendChild(meta);
-    li.appendChild(delBtn);
+
+    // Proxy có sẵn không xóa được (xóa xong mở app lại nó tự mọc lại)
+    if (!item.builtIn) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'step-btn';
+      delBtn.textContent = 'Xóa';
+      delBtn.addEventListener('click', async () => {
+        await window.KeyPoolManager.removeKey(item.id);
+        await refreshSettingsUI();
+      });
+      li.appendChild(delBtn);
+    }
+
     listEl.appendChild(li);
   });
 }

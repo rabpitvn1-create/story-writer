@@ -141,7 +141,36 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
   return fullText;
 }
 
+// Gọi qua proxy có sẵn của anh (Render): proxy giữ key ở server nên app không cần key.
+// Proxy không hỗ trợ streaming — luôn gọi không-stream và đọc full JSON trả về.
+async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, signal }) {
+  const fullMessages = systemPrompt
+    ? [{ role: 'system', content: systemPrompt }, ...messages]
+    : messages;
+
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat`, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages: fullMessages, max_tokens: maxTokens, temperature })
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    if (res.status === 429 || res.status === 503) {
+      throw new RateLimitError(res.status, errText || `HTTP ${res.status}`, parseRetryAfter(res.headers));
+    }
+    const proxyErr = new Error(`Proxy lỗi ${res.status}: ${errText}`);
+    proxyErr.status = res.status;
+    throw proxyErr;
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
 async function callLLM(params) {
+  if (params.baseUrl) return callProxy(params);
   if (params.provider === 'claude') return callClaude(params);
   return callGeminiOpenAI(params);
 }

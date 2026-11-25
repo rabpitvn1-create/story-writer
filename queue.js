@@ -87,17 +87,20 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
       );
     }
 
+    // Key proxy có sẵn mang theo model mặc định của proxy đó (VD: Premium Proxy dùng occ/claude-haiku-5-5)
     const model =
-      keyObj.provider === 'claude'
+      keyObj.model ||
+      (keyObj.provider === 'claude'
         ? apiConfig.claudeModel || 'claude-sonnet-5-5'
         : lane === 'writer'
           ? apiConfig.geminiWriterModel || 'gemini-3.6-flash'
-          : apiConfig.geminiUtilityModel || 'gemini-3.5-flash-lite';
+          : apiConfig.geminiUtilityModel || 'gemini-3.5-flash-lite');
 
     try {
       const result = await window.UnifiedAdapter.callLLM({
         provider: keyObj.provider,
         apiKey: keyObj.apiKey,
+        baseUrl: keyObj.baseUrl,
         model,
         systemPrompt,
         messages,
@@ -136,6 +139,13 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
           continue;
         }
 
+        await window.KeyPoolManager.markCooldown24h(keyObj.id);
+        notifyStatus({ type: 'key_rotated', label: keyObj.label });
+        continue;
+      }
+
+      // Proxy hết key ở server (401/403): khóa proxy này 24h rồi xoay sang proxy/key còn lại
+      if (keyObj.baseUrl && (err.status === 401 || err.status === 403)) {
         await window.KeyPoolManager.markCooldown24h(keyObj.id);
         notifyStatus({ type: 'key_rotated', label: keyObj.label });
         continue;
