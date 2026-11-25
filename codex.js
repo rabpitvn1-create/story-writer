@@ -1,6 +1,25 @@
+const CODE_LINE_RE = /^([A-Z]{2,4})-([A-Z]{3})-(?:\d{4}-)?\d+$/;
+const CODE_ANYWHERE_RE = /\b([A-Z]{2,4}-[A-Z]{3}-(?:\d{4}-)?\d+)\b/;
+
+const FIELD_LABELS = [
+  [/^(tên|tên đầy đủ|họ tên|name|nhân vật)$/i, 'name'],
+  [/^(mã tra cứu|mã hồ sơ|mã|code)$/i, 'code'],
+  [/^(danh hiệu|biệt danh|tên khác|bí danh|aliases|alias)$/i, 'aliases'],
+  [/^(ngoại hình|diện mạo|giới tính|chủng hệ|tuổi|năm sinh|quê quán|nơi sinh|appearance)$/i, 'appearance'],
+  [/^(tính cách|tâm lý|xuất thân|vai trò|phe phái|chức vụ|tổ chức|sở thích|mối quan tâm tình cảm|đặc điểm nổi bật|tình trạng năm \d{4}|personality)$/i, 'personality'],
+  [/^(kỹ năng|năng lực|sức mạnh|chiêu thức|đặc quyền zeus|skills|abilities|skills_abilities)$/i, 'skills_abilities'],
+  [/^(vật phẩm|túi đồ|trang bị|bảo vật|vũ khí chính|chiến giáp|khu dự trữ bia|inventory|inventory_default)$/i, 'inventory_default'],
+  [/^(giọng điệu|cách nói|lời thoại|speech|speech_style)$/i, 'speech_style'],
+  [/^(ràng buộc|cấm kỵ|giới hạn|điểm yếu|hard_constraints|constraints)$/i, 'hard_constraints']
+];
+
+const STRUCTURAL_HEADING_RE =
+  /^(bách khoa|mục lục|cách sử dụng|thiết lập nền|hồ sơ địa phương|truyền khẩu|thế giới và nguồn gốc|quy luật|địa chí|phụ lục|tóm tắt|tổng quan)/i;
+
 function emptyChar(name = '') {
   return {
     name: name.trim(),
+    code: '',
     aliases: '',
     appearance: '',
     personality: '',
@@ -13,122 +32,237 @@ function emptyChar(name = '') {
   };
 }
 
-function matchFieldKey(line) {
-  const clean = line.replace(/^[-*•]\s*/, '').trim();
-  const idx = clean.indexOf(':');
-  if (idx <= 0 || idx > 35) return null;
-  const label = clean.slice(0, idx).toLowerCase().trim();
-  const value = clean.slice(idx + 1).trim();
-
-  if (/^(tên|name|nhân vật)$/.test(label)) return ['name', value];
-  if (/^(biệt danh|tên khác|aliases|alias)$/.test(label)) return ['aliases', value];
-  if (/^(ngoại hình|appearance|diện mạo)$/.test(label)) return ['appearance', value];
-  if (/^(tính cách|personality)$/.test(label)) return ['personality', value];
-  if (/^(kỹ năng|năng lực|skills|abilities|skills_abilities)$/.test(label)) return ['skills_abilities', value];
-  if (/^(vật phẩm|túi đồ|trang bị|inventory|inventory_default)$/.test(label)) return ['inventory_default', value];
-  if (/^(giọng điệu|cách nói|speech|speech_style)$/.test(label)) return ['speech_style', value];
-  if (/^(ràng buộc|cấm kỵ|giới hạn|hard_constraints|constraints)$/.test(label)) return ['hard_constraints', value];
-  return null;
-}
-
-function isHeadingLine(line) {
-  if (/^#{1,3}\s+/.test(line)) return line.replace(/^#{1,3}\s+/, '').trim();
-  if (/^(nhân vật|character)\s*[:\-]\s*/i.test(line)) return line.trim();
-  // Dòng VIẾT HOA chỉ là tên nhân vật khi ngắn, không có dấu câu kết câu
-  if (
-    line.length >= 2 && line.length <= 45 && line === line.toUpperCase() &&
-    /[A-ZÀ-Ỹ]/.test(line) && !/[.!?]$/.test(line) && line.trim().split(/\s+/).length <= 4
-  ) {
-    return line.trim();
+function matchStandaloneLabel(line) {
+  const clean = line.replace(/^[-*•]\s*/, '').replace(/:\s*$/, '').trim();
+  // "NHÂN VẬT" đứng một mình là tiêu đề mục, không phải nhãn tên
+  if (/^(nhân vật|character)$/i.test(clean)) return null;
+  for (const [re, key] of FIELD_LABELS) {
+    if (re.test(clean)) return { key, label: clean };
   }
   return null;
 }
 
-// 1. Regex parser 0 API call
+function matchInlineLabel(line) {
+  const clean = line.replace(/^[-*•]\s*/, '').trim();
+  const idx = clean.indexOf(':');
+  if (idx <= 0 || idx > 32) return null;
+  const rawLabel = clean.slice(0, idx).trim();
+  const value = clean.slice(idx + 1).trim();
+  if (!value) return null;
+
+  for (const [re, key] of FIELD_LABELS) {
+    if (re.test(rawLabel)) return { key, label: rawLabel, value };
+  }
+  return null;
+}
+
+function isIgnoredBanner(line) {
+  if (CODE_LINE_RE.test(line)) return true;
+  if (/[•|]/.test(line) && CODE_ANYWHERE_RE.test(line)) return true;
+  if (STRUCTURAL_HEADING_RE.test(line)) return true;
+  if (/^\(.+\)$/.test(line)) return true;
+  if (/^(mã tra cứu|đối tượng|phân loại|thuộc tính|dữ liệu)$/i.test(line)) return true;
+  if (line.length <= 45 && line === line.toUpperCase() && /[A-ZÀ-Ỹ]/.test(line)) return true;
+  return false;
+}
+
+function appendField(char, key, value, labelPrefix = '') {
+  if (!char || !value) return;
+  const text = labelPrefix ? `${labelPrefix}: ${value}` : value;
+  if (!char[key]) {
+    char[key] = text;
+  } else if (!char[key].includes(text)) {
+    char[key] = `${char[key]}\n${text}`;
+  }
+}
+
 function parseCodexText(text) {
-  const lines = String(text || '').split(/\r?\n/);
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
   const characters = [];
   const hardRules = [];
   const softLore = [];
 
-  let mode = null; // 'char' | 'hard' | 'soft'
   let currentChar = null;
+  let worldMode = null;
+  let activeSubField = null;
 
   const flushChar = () => {
     if (currentChar && currentChar.name) characters.push(currentChar);
     currentChar = null;
+    activeSubField = null;
   };
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-    const heading = isHeadingLine(line);
-    if (heading) {
-      const lower = heading.toLowerCase();
-      if (/(hard\s*rule|luật cứng|quy tắc cứng|bất biến)/.test(lower)) {
-        flushChar();
-        mode = 'hard';
-        continue;
-      }
-      if (/(soft\s*lore|tin đồn|truyền thuyết|thế giới|world|lore|bối cảnh)/.test(lower)) {
-        flushChar();
-        mode = 'soft';
-        continue;
-      }
-      if (/^(nhân vật|character)\s*[:\-]\s*(.+)$/i.test(heading)) {
-        flushChar();
-        mode = 'char';
-        currentChar = emptyChar(heading.replace(/^(nhân vật|character)\s*[:\-]\s*/i, ''));
-        continue;
-      }
-      // Heading viết hoa hoặc # Tên nhân vật (nếu không phải mục lục chung)
-      if (!/^(codex|hồ sơ|mục lục|danh sách nhân vật)$/i.test(lower)) {
-        flushChar();
-        mode = 'char';
-        currentChar = emptyChar(heading);
-      } else {
-        // Tiêu đề chung (Mục lục, Codex...) kết thúc mục nhân vật đang mở; nội dung sau không rò vào nhân vật
-        flushChar();
-        mode = null;
-      }
+    if (/^thiết lập nền\b/i.test(line)) {
+      worldMode = 'hard';
+      const afterColon = line.replace(/^thiết lập nền\s*[:\-–]?\s*/i, '').trim();
+      if (afterColon.length > 10) hardRules.push(afterColon);
+      continue;
+    }
+    if (/^(hồ sơ địa phương|truyền khẩu địa phương|truyền khẩu)\b/i.test(line)) {
+      worldMode = 'soft';
+      const afterColon = line.replace(/^(hồ sơ địa phương|truyền khẩu địa phương|truyền khẩu)\s*[:\-–]?\s*/i, '').trim();
+      if (afterColon.length > 10) softLore.push(afterColon);
+      continue;
+    }
+    if (/^(mục lục theo lĩnh vực|cách sử dụng bách khoa)/i.test(line)) {
+      worldMode = null;
+      continue;
+    }
+    // Dòng loại hồ sơ: "HỒ SƠ  •  THIẾT LẬP NỀN" (luật cứng) / "HỒ SƠ  •  HỒ SƠ ĐỊA PHƯƠNG" (lore)
+    if (/hồ sơ\s*•/i.test(line)) {
+      worldMode = /thiết lập nền/i.test(line) ? 'hard' : 'soft';
+      activeSubField = null;
+      continue;
+    }
+    // Tiêu đề mục đánh số ("1. Xuất thân", "4.8. ...") — mục mới, không nối tiếp luật/mục trước
+    if (/^\d+(\.\d+)*\.\s+/.test(line)) {
+      worldMode = null;
+      activeSubField = null;
       continue;
     }
 
-    const field = matchFieldKey(line);
-    if (field) {
-      const [key, val] = field;
-      if (key === 'name') {
-        // Heading "NHÂN VẬT: Kael" rồi dòng "Tên: Kael" là cùng một nhân vật — không tách đôi
-        if (currentChar && currentChar.name.toLowerCase() === val.toLowerCase()) {
-          mode = 'char';
-        } else {
+    const codeMatch = line.match(CODE_ANYWHERE_RE);
+    if (codeMatch && (CODE_LINE_RE.test(line) || /[•|]/.test(line) || /^mã(\s|:|$)/i.test(line) || /^([A-Z]{2,4}-[A-Z]{3}-(?:\d{4}-)?\d+)\s{2,}/.test(line))) {
+      const fullCode = codeMatch[1];
+      const group = fullCode.split('-')[1];
+
+      if (group === 'CHR') {
+        if (!currentChar || (currentChar.code && currentChar.code !== fullCode)) {
           flushChar();
-          mode = 'char';
-          currentChar = emptyChar(val);
+          currentChar = emptyChar('');
         }
-      } else if (mode === 'char' && currentChar) {
-        currentChar[key] = currentChar[key] ? `${currentChar[key]}; ${val}` : val;
+        currentChar.code = fullCode;
+        // "CODE  |  Tên" — lấy tên từ cùng dòng khi chỉ có đúng 2 phần
+        if (!currentChar.name) {
+          const parts = line.split(/\s{2,}|[•|]/).map((s) => s.trim()).filter(Boolean);
+          if (parts.length === 2 && parts[1].length >= 1 && parts[1].length <= 45 && parts[1] !== parts[1].toUpperCase()) {
+            currentChar.name = parts[1];
+          }
+        }
+        worldMode = null;
+        activeSubField = null;
+      } else if (group === 'RUL') {
+        worldMode = 'hard';
+        activeSubField = currentChar ? 'hard_constraints' : null;
+      } else if (['LOC', 'ENT', 'EVT', 'SEC'].includes(group)) {
+        if (!currentChar) worldMode = 'soft';
+        activeSubField = null;
+      } else if (currentChar && ['ABL', 'PER', 'DLG', 'ART', 'REL'].includes(group)) {
+        worldMode = null;
+        if (group === 'ABL') activeSubField = 'skills_abilities';
+        else if (group === 'PER') activeSubField = 'personality';
+        else if (group === 'DLG') activeSubField = 'speech_style';
+        else if (group === 'ART') activeSubField = 'inventory_default';
+        else if (group === 'REL') activeSubField = 'personality';
       }
       continue;
     }
 
-    if (mode === 'hard') {
-      hardRules.push(line.replace(/^[-*•]\s*/, ''));
-    } else if (mode === 'soft') {
-      softLore.push(line.replace(/^[-*•]\s*/, ''));
-    } else if (mode === 'char' && currentChar) {
-      currentChar.personality = currentChar.personality
-        ? `${currentChar.personality}\n${line}`
-        : line;
+    const inline = matchInlineLabel(line);
+    if (inline) {
+      if (inline.key === 'name') {
+        if (currentChar && currentChar.name && currentChar.name !== inline.value) flushChar();
+        if (!currentChar) currentChar = emptyChar(inline.value);
+        else currentChar.name = inline.value;
+        worldMode = null;
+      } else if (inline.key === 'code') {
+        // Chỉ nhận giá trị giống mã (VD: "Mã tra cứu: KAE-CHR-001") — tránh ăn nhầm tiêu đề cột
+        const codeInValue = inline.value.match(CODE_ANYWHERE_RE);
+        // Chỉ mã nhân vật (-CHR-) mới là mã của nhân vật — mã sự kiện/vật phẩm/luật không ghi đè
+        if (codeInValue && codeInValue[1].split('-')[1] === 'CHR') {
+          if (!currentChar) currentChar = emptyChar('');
+          currentChar.code = codeInValue[1];
+        }
+      } else if (currentChar) {
+        const prefix = /^(giới tính|chủng hệ|tuổi|năm sinh|quê quán|nơi sinh|vai trò|phe phái|chức vụ)$/i.test(
+          inline.label
+        )
+          ? inline.label
+          : '';
+        appendField(currentChar, inline.key, inline.value, prefix);
+      }
+      continue;
+    }
+
+    const standalone = matchStandaloneLabel(line);
+    if (standalone && i + 1 < lines.length) {
+      const nextLine = lines[i + 1];
+      // "Mã tra cứu" chỉ nhận giá trị là mã nhân vật (-CHR-) — tránh ăn nhầm tiêu đề cột ("Đối tượng") hay mã sự kiện/vật phẩm
+      const nextCode = nextLine.match(CODE_LINE_RE);
+      const nextIsValue = standalone.key === 'code'
+        ? (nextCode && nextCode[2] === 'CHR')
+        : (!matchStandaloneLabel(nextLine) && !matchInlineLabel(nextLine) && !CODE_LINE_RE.test(nextLine));
+      if (nextIsValue) {
+        i++;
+        if (standalone.key === 'name') {
+          if (currentChar && currentChar.name && currentChar.name !== nextLine) flushChar();
+          if (!currentChar) currentChar = emptyChar(nextLine);
+          else currentChar.name = nextLine;
+          worldMode = null;
+        } else if (standalone.key === 'code') {
+          if (!currentChar) currentChar = emptyChar('');
+          currentChar.code = nextLine;
+        } else if (currentChar) {
+          const prefix = /^(giới tính|chủng hệ|tuổi|năm sinh|quê quán|nơi sinh|vai trò|phe phái|chức vụ)$/i.test(
+            standalone.label
+          )
+            ? standalone.label
+            : '';
+          appendField(currentChar, standalone.key, nextLine, prefix);
+        }
+        continue;
+      }
+    }
+
+    // Dòng trỏ chéo "XEM THÊM PRN-… · PRN-…" không phải canon
+    if (/^xem thêm/i.test(line)) continue;
+    if (isIgnoredBanner(line)) continue;
+
+    const cleanContent = line.replace(/^[-*•]\s*/, '');
+    if (worldMode === 'hard') {
+      if (cleanContent.length > 8) hardRules.push(cleanContent);
+      if (currentChar && activeSubField === 'hard_constraints') {
+        appendField(currentChar, 'hard_constraints', cleanContent);
+      }
+    } else if (worldMode === 'soft') {
+      if (cleanContent.length > 8) softLore.push(cleanContent);
+    } else if (currentChar && activeSubField) {
+      appendField(currentChar, activeSubField, cleanContent);
+    } else if (currentChar && (cleanContent.match(/\b[A-Z]{2,4}-[A-Z]{3}-(?:\d{4}-)?\d+\b/g) || []).length < 2) {
+      // Văn xuôi tự do trong hồ sơ nhân vật (VD: các mục "1. Xuất thân") → tính cách
+      appendField(currentChar, 'personality', cleanContent);
     }
   }
 
   flushChar();
-  return { characters, hardRules, softLore, source: 'regex' };
+  // Gộp các bản ghi trùng mã (VD: hồ sơ nhân vật trong file + danh mục tra cứu cuối file)
+  const byCode = new Map();
+  for (const c of characters) {
+    const key = c.code || `name:${c.name}`;
+    if (!byCode.has(key)) {
+      byCode.set(key, c);
+      continue;
+    }
+    const prev = byCode.get(key);
+    for (const k of ['aliases', 'appearance', 'personality', 'skills_abilities', 'inventory_default', 'speech_style', 'hard_constraints', 'portrait']) {
+      if (!prev[k] && c[k]) prev[k] = c[k];
+    }
+  }
+  return {
+    characters: [...byCode.values()],
+    hardRules: [...new Set(hardRules)],
+    softLore: [...new Set(softLore)],
+    source: 'regex'
+  };
 }
 
-// 2. LLM extraction dự phòng (1 call lane 'utility')
 async function extractCodexWithLLM(text) {
   const prompt = `Trích xuất thông tin từ tài liệu codex sau thành JSON hợp lệ (không giải thích thêm).
 Cấu trúc bắt buộc:
@@ -136,6 +270,7 @@ Cấu trúc bắt buộc:
   "characters": [
     {
       "name": "",
+      "code": "",
       "aliases": "",
       "appearance": "",
       "personality": "",
@@ -145,8 +280,8 @@ Cấu trúc bắt buộc:
       "hard_constraints": ""
     }
   ],
-  "hardRules": ["luật thế giới bất biến"],
-  "softLore": ["tin đồn, bối cảnh mở"]
+  "hardRules": ["luật thế giới bất biến / thiết lập nền"],
+  "softLore": ["hồ sơ địa phương, truyền khẩu, bối cảnh mở"]
 }
 
 Tài liệu:
@@ -176,7 +311,8 @@ ${text.slice(0, 14000)}`;
 
 async function autoSplitDocxCodex(text) {
   const regexResult = parseCodexText(text);
-  if (regexResult.characters.length >= 1) return regexResult;
+  // File chỉ có codex thế giới (không có nhân vật) vẫn dùng kết quả regex, khỏi gọi LLM
+  if (regexResult.characters.length >= 1 || regexResult.hardRules.length >= 1 || regexResult.softLore.length >= 1) return regexResult;
   return extractCodexWithLLM(text);
 }
 

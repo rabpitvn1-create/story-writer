@@ -178,50 +178,44 @@
         <button class="close-btn" data-close="import-codex-modal" aria-label="Đóng">&times;</button>
       </div>
 
-      <!-- Cách chính: Tải file .docx bằng mammoth.js -->
+      <!-- Tải file .docx lên là tự nhận diện + tự lưu, khỏi bấm thêm nút nào -->
       <div>
         <input id="docx-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" />
         <button id="upload-docx-btn" type="button" class="primary-btn">
           Tải file DOCX lên
         </button>
-        <p id="docx-status" class="docx-status">Chưa có file codex .docx nào được tải lên.</p>
+        <p id="docx-status" class="docx-status">Tải file .docx để tự động nhận diện nhân vật và luật thế giới.</p>
         <div id="docx-preview-wrap" class="docx-preview-wrap hidden">
           <div id="docx-filename" class="docx-filename"></div>
           <pre id="docx-preview" class="docx-preview"></pre>
         </div>
-        <button id="auto-parse-docx-btn" type="button" class="secondary-btn hidden" style="margin-top:10px;">
-          Tách codex tự động
-        </button>
         <div id="codex-review-wrap" class="codex-review-wrap hidden">
           <p id="codex-review-info" class="docx-status"></p>
           <div id="codex-review-list" class="codex-review-list"></div>
-          <label class="review-label">Hard Rules (mỗi dòng 1 luật)</label>
-          <textarea id="review-hard-rules" rows="3"></textarea>
-          <label class="review-label">Soft Lore (mỗi dòng 1 mục)</label>
-          <textarea id="review-soft-lore" rows="3"></textarea>
-          <button id="save-parsed-codex-btn" type="button" class="primary-btn" style="margin-top:10px;">
-            Duyệt & Lưu vào IndexedDB
-          </button>
         </div>
       </div>
 
-      <!-- Nhập tay bổ sung từng nhân vật -->
-      <form id="codex-form" class="codex-form setting-divider">
-        <p class="form-section-title">Hoặc nhập / cập nhật nhanh nhân vật</p>
+      <!-- Form dự phòng: chỉ hiện khi parser không tìm thấy nhân vật nào hoặc khi bấm Sửa -->
+      <form id="codex-form" class="codex-form setting-divider hidden">
+        <p id="codex-form-title" class="form-section-title">Chỉnh sửa / Bổ sung nhân vật</p>
         <div class="setting-group">
           <label for="input-char-name">Tên nhân vật</label>
           <input id="input-char-name" type="text" required placeholder="Ví dụ: Kael hoặc Alxece" />
         </div>
         <div class="setting-group">
-          <label for="input-char-desc">Mô tả hồ sơ</label>
-          <textarea id="input-char-desc" rows="3" required placeholder="Ngoại hình, tính cách, ghi chú..."></textarea>
+          <label for="input-char-code">Mã tra cứu</label>
+          <input id="input-char-code" type="text" placeholder="VD: KAE-CHR-001" />
+        </div>
+        <div class="setting-group">
+          <label for="input-char-desc">Tính cách / Ngoại hình / Ghi chú</label>
+          <textarea id="input-char-desc" rows="3" placeholder="Ngoại hình, tính cách, ghi chú..."></textarea>
         </div>
         <div class="setting-group">
           <label for="input-char-image-file">Ảnh chân dung (bỏ trống = nhân vật phụ)</label>
           <input id="input-char-image-file" type="file" accept="image/*" />
           <input id="input-char-image-url" type="url" class="url-input" placeholder="Hoặc dán URL ảnh chân dung..." />
         </div>
-        <button type="submit" class="secondary-btn">Lưu nhân vật vào codex</button>
+        <button type="submit" class="primary-btn">Cập nhật nhân vật</button>
       </form>
     </div>
   </div>
