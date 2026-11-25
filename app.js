@@ -78,7 +78,10 @@ function populateSetupUI(prefs) {
   document.getElementById('setup-fullscreen-toggle').checked = Boolean(prefs.autoFullscreen);
 
   const map = { drama: prefs.drama, deathRate: prefs.sideCharDeathRate, ending: prefs.ending };
-  document.querySelectorAll('.seg-group').forEach((group) => {
+  // fix: scope to the setup modal — the unscoped selector also matched the
+  // start screen's [data-start-seg] groups (dataset.seg undefined) and
+  // stripped their active pill on every load.
+  document.querySelectorAll('#setup-modal .seg-group').forEach((group) => {
     const val = map[group.dataset.seg];
     group.querySelectorAll('.seg-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.val === val);
@@ -312,13 +315,34 @@ let currentChapterNumber = 1;
 function showEmptyStartScreen(show) {
   const emptyEl = document.getElementById('empty-start-screen');
   const storyEl = document.getElementById('story-content');
+  const nextBar = document.getElementById('chapter-next-bar');
+  const writerBar = document.querySelector('.writer-bar');
+  const chapterEnd = document.querySelector('.chapter-end');
+  const endActions = document.getElementById('chapter-end-actions'); // nếu repo có wrapper nút cuối chương
+
   if (show) {
-    document.getElementById('chapter-title').textContent = 'CHAPTER 1';
-    emptyEl.classList.remove('hidden');
-    storyEl.classList.add('hidden');
+    document.getElementById('chapter-title').textContent = 'TRUYỆN MỚI';
+    emptyEl?.classList.remove('hidden');
+    storyEl?.classList.add('hidden');
+    nextBar?.classList.add('hidden');
+    writerBar?.classList.add('hidden');
+    chapterEnd?.classList.add('hidden');
+    endActions?.classList.add('hidden');
+    // fix: đánh dấu seg đang chọn trên màn bắt đầu theo gu truyện hiện tại
+    // (mặc định Trung bình / Trung bình / Kết thúc mở). Nếu không, khay
+    // segment luôn trống vì chưa ai bấm, trái với mockup đã duyệt.
+    const startSegMap = { drama: currentStoryPrefs.drama, deathRate: currentStoryPrefs.sideCharDeathRate, ending: currentStoryPrefs.ending };
+    document.querySelectorAll('[data-start-seg]').forEach((group) => {
+      const val = startSegMap[group.dataset.startSeg];
+      group.querySelectorAll('.seg-btn').forEach((btn) => btn.classList.toggle('active', btn.dataset.val === val));
+    });
   } else {
-    emptyEl.classList.add('hidden');
-    storyEl.classList.remove('hidden');
+    emptyEl?.classList.add('hidden');
+    storyEl?.classList.remove('hidden');
+    nextBar?.classList.remove('hidden');
+    writerBar?.classList.remove('hidden');
+    chapterEnd?.classList.remove('hidden');
+    endActions?.classList.remove('hidden');
   }
 }
 
@@ -683,7 +707,11 @@ setChapterSubtitle(title) {
 function renderCharDrawer() {
   const list = document.getElementById('char-drawer-list');
   list.innerHTML = '';
-  const chars = Object.values(codex);
+  const chars = Object.values(codex).sort((a, b) => {
+    const aMain = window.CodexParser?.isMainCharacter(a) ? 1 : 0;
+    const bMain = window.CodexParser?.isMainCharacter(b) ? 1 : 0;
+    return bMain - aMain;
+  });
 
   if (chars.length === 0) {
     list.innerHTML = '<p class="docx-status">Chưa có nhân vật nào.</p>';
@@ -700,8 +728,7 @@ function renderCharDrawer() {
 
     if (char.portrait) {
       const wrap = document.createElement('div');
-      wrap.className = 'dialogue-avatar-btn';
-      wrap.style.marginTop = '2px';
+      wrap.className = 'char-drawer-avatar';
       const img = document.createElement('img');
       img.className = 'dialogue-avatar-img';
       img.src = char.portrait;
@@ -728,12 +755,18 @@ function renderCharDrawer() {
       ? (char.portrait ? 'Nhân vật chính' : 'Nhân vật chính • chưa có ảnh')
       : 'Nhân vật phụ';
 
-    const stateEl = document.createElement('div');
-    stateEl.className = 'char-card-state';
-    stateEl.textContent = stateParts.join(' • ') || roleLabel;
+    const badgeEl = document.createElement('span');
+    badgeEl.className = isMain ? 'char-badge-main' : 'char-badge-sub';
+    badgeEl.textContent = roleLabel;
 
     info.appendChild(nameEl);
-    info.appendChild(stateEl);
+    info.appendChild(badgeEl);
+    if (stateParts.length > 0) {
+      const stateEl = document.createElement('div');
+      stateEl.className = 'char-card-state';
+      stateEl.textContent = stateParts.join(' • ');
+      info.appendChild(stateEl);
+    }
     card.appendChild(info);
 
     const delBtn = document.createElement('button');

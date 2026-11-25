@@ -173,10 +173,13 @@
   <!-- Panel Cài đặt -->
   <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
     <div class="modal-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
       <div class="modal-header">
         <h2 id="settings-heading">Cài đặt</h2>
         <button class="close-btn" data-close="settings-modal" aria-label="Đóng">&times;</button>
       </div>
+      <p class="section-eyebrow">Hiển thị</p>
+      <div class="settings-card">
       <div class="setting-group">
         <label for="font-select">Phông chữ</label>
         <select id="font-select">
@@ -195,6 +198,9 @@
           <button id="size-inc" type="button" class="step-btn" aria-label="Tăng cỡ chữ">A+</button>
         </div>
       </div>
+      </div>
+      <p class="section-eyebrow">Ngân sách &amp; API</p>
+      <div class="settings-card">
       <div class="setting-group setting-divider">
         <div class="budget-row">
           <span>Ngân sách hôm nay</span>
@@ -222,6 +228,7 @@
           <button id="add-key-btn" type="button" class="step-btn">Thêm</button>
         </div>
         <ul id="key-pool-list" class="key-pool-list"></ul>
+      </div>
       </div>
 
       <div class="setting-group setting-divider">
@@ -318,12 +325,13 @@
     <aside class="char-drawer" aria-label="Danh sách nhân vật">
       <div class="modal-header">
         <h2>Nhân vật</h2>
-        <button id="close-drawer-btn" class="close-btn" aria-label="Đóng">&times;</button>
+        <div class="drawer-header-actions">
+          <button id="drawer-add-char-btn" type="button" class="drawer-add-pill">+ Thêm</button>
+          <button id="close-drawer-btn" class="close-btn" aria-label="Đóng">&times;</button>
+        </div>
       </div>
-      <button id="drawer-add-char-btn" type="button" class="primary-btn" style="margin-bottom:12px;">
-        + Thêm nhân vật
-      </button>
       <div id="char-drawer-list" class="char-drawer-list"></div>
+      <p class="drawer-footer-hint">Chạm vào nhân vật để xem &amp; sửa hồ sơ</p>
     </aside>
   </div>
 
