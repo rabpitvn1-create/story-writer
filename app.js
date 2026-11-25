@@ -601,6 +601,30 @@ async function processAndSaveDocx(text) {
   statusEl.textContent = 'Đã nhận diện và lưu xong.';
 }
 
+// Xóa toàn bộ codex (tất cả nhân vật + luật thế giới) — chỉ codex, không động tới truyện/chương đã viết
+async function deleteAllCodex() {
+  const statusEl = document.getElementById('docx-status');
+  try {
+    await window.StoryDB.db.characters.clear();
+    await window.StoryDB.db.worldRules.clear();
+  } catch (err) {
+    statusEl.textContent = `Lỗi khi xóa codex: ${err.message}`;
+    return;
+  }
+  for (const k of Object.keys(codex)) delete codex[k];
+  document.getElementById('codex-review-list').innerHTML = '';
+  document.getElementById('codex-review-info').textContent = '';
+  // Dọn cả dấu vết file .docx đã tải (không thì mở lại bảng nhập nó hiện lại) và form sửa đang mở (không thì lưu lại là nhân vật sống lại)
+  docxCodex = null;
+  renderDocxPreview(null);
+  localStorage.removeItem(DOCX_CODEX_KEY);
+  document.getElementById('codex-review-wrap').classList.add('hidden');
+  document.getElementById('codex-form').classList.add('hidden');
+  renderCharDrawer();
+  await loadAndRenderLatestChapter();
+  statusEl.textContent = 'Đã xóa toàn bộ codex.';
+}
+
 function openCodex(charName) {
   const char = codex[charName];
   if (!char) return;
@@ -781,6 +805,12 @@ function setupEvents(settings) {
     } finally {
       docxInput.value = '';
     }
+  });
+
+  // Xóa toàn bộ codex — hỏi xác nhận vì không khôi phục được
+  document.getElementById('delete-all-codex-btn').addEventListener('click', async () => {
+    if (!confirm('Xóa toàn bộ codex (tất cả nhân vật + luật thế giới)? Không khôi phục được.')) return;
+    await deleteAllCodex();
   });
 
   // Lưu nhân vật nhập tay (đường dự phòng — chỉ tên là bắt buộc, mô tả tùy ý)
