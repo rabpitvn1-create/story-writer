@@ -60,13 +60,18 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Bỏ qua nếu không ghi được cài đặt (ví dụ chế độ riêng tư)
+  }
 }
 
 function loadCodex() {
   try {
     const raw = localStorage.getItem(CODEX_KEY);
-    return raw ? JSON.parse(raw) : structuredClone(DEFAULT_CODEX);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : structuredClone(DEFAULT_CODEX);
   } catch {
     return structuredClone(DEFAULT_CODEX);
   }
@@ -75,15 +80,19 @@ function loadCodex() {
 function saveCodex(nextCodex) {
   try {
     localStorage.setItem(CODEX_KEY, JSON.stringify(nextCodex));
-  } catch {
-    // Bỏ qua nếu ảnh vượt dung lượng localStorage
+  } catch (err) {
+    if (err && err.name === 'QuotaExceededError') {
+      alert('Ảnh chân dung quá lớn nên không lưu được nhân vật. Hãy dùng ảnh nhỏ hơn hoặc dán URL ảnh.');
+    }
+    // Các lỗi khác: bỏ qua như trước
   }
 }
 
 function loadDocxCodex() {
   try {
     const raw = localStorage.getItem(DOCX_CODEX_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
   }
@@ -92,8 +101,11 @@ function loadDocxCodex() {
 function saveDocxCodex(doc) {
   try {
     localStorage.setItem(DOCX_CODEX_KEY, JSON.stringify(doc));
-  } catch {
-    // Bỏ qua nếu file quá lớn vượt localStorage
+  } catch (err) {
+    if (err && err.name === 'QuotaExceededError') {
+      alert('File DOCX quá lớn nên không lưu được. Hãy dùng file nhỏ hơn.');
+    }
+    // Các lỗi khác: bỏ qua như trước
   }
 }
 
@@ -117,11 +129,18 @@ function renderDocxPreview(doc) {
 }
 
 function applySettings(settings) {
-  document.documentElement.style.setProperty('--reader-font', settings.font);
-  document.documentElement.style.setProperty('--reader-size', `${settings.fontSize}px`);
-  document.getElementById('font-select').value = settings.font;
-  document.getElementById('size-range').value = settings.fontSize;
-  document.getElementById('size-value').textContent = settings.fontSize;
+  const fontSelect = document.getElementById('font-select');
+  const validFont = Array.from(fontSelect.options).some((opt) => opt.value === settings.font)
+    ? settings.font
+    : DEFAULT_SETTINGS.font;
+  const validSize = Math.min(26, Math.max(14, Number(settings.fontSize) || DEFAULT_SETTINGS.fontSize));
+  settings.font = validFont;
+  settings.fontSize = validSize;
+  document.documentElement.style.setProperty('--reader-font', validFont);
+  document.documentElement.style.setProperty('--reader-size', `${validSize}px`);
+  fontSelect.value = validFont;
+  document.getElementById('size-range').value = validSize;
+  document.getElementById('size-value').textContent = validSize;
 }
 
 function escapeRegExp(str) {
@@ -138,7 +157,7 @@ function appendLinkedText(container, text) {
     return;
   }
 
-  const pattern = new RegExp(`\\b(${names.map(escapeRegExp).join('|')})\\b`, 'g');
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(${names.map(escapeRegExp).join('|')})(?![\\p{L}\\p{N}_])`, 'gu');
   let lastIndex = 0;
   let match;
 
@@ -333,7 +352,11 @@ function setupEvents(settings) {
 
     let portrait = urlInput;
     if (fileInput.files && fileInput.files[0]) {
-      portrait = await readFileAsDataURL(fileInput.files[0]);
+      try {
+        portrait = await readFileAsDataURL(fileInput.files[0]);
+      } catch {
+        alert('Không đọc được ảnh chân dung. Đã dùng URL ảnh (nếu có).');
+      }
     }
 
     codex[name] = { name, description, portrait };

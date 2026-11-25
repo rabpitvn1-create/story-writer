@@ -53,6 +53,10 @@ body {
   background-color: rgba(43, 38, 32, 0.08);
 }
 
+.topbar-spacer {
+  width: 44px;
+}
+
 .chapter-title {
   margin: 0;
   text-align: center;

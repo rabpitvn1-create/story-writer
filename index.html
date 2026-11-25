@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/mammoth@1/mammoth.browser.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.11.0/mammoth.browser.min.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -69,7 +69,7 @@
       </div>
 
       <!-- Cách chính: Tải file .docx bằng mammoth.js -->
-      <div class="docx-section">
+      <div>
         <input id="docx-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" />
         <button id="upload-docx-btn" type="button" class="primary-btn">
           Tải file DOCX lên
@@ -104,7 +104,7 @@
 
   <!-- Panel Xem Codex Nhân vật -->
   <div id="codex-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="codex-name">
-    <div class="modal-card codex-card">
+    <div class="modal-card">
       <div class="modal-header">
         <div class="codex-title-wrap">
           <img id="codex-portrait" class="codex-portrait hidden" alt="" />
