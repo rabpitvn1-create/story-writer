@@ -53,10 +53,6 @@ body {
   background-color: rgba(43, 38, 32, 0.08);
 }
 
-.topbar-spacer {
-  width: 44px;
-}
-
 .chapter-title {
   margin: 0;
   text-align: center;
@@ -372,4 +368,198 @@ body {
   font-size: 15px;
   line-height: 1.65;
   white-space: pre-line;
+}
+
+/* Phần 2: Banner đếm ngược + Pool API Key & Ngân sách */
+.cooldown-banner {
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 13px;
+  background-color: #f3e4c9;
+  color: #5c3a14;
+  border-bottom: 1px solid var(--border);
+}
+
+.budget-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.toggle-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--ink) !important;
+  cursor: pointer;
+}
+
+#daily-cap-input,
+.key-add-row input,
+.key-add-row select {
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+
+#daily-cap-input {
+  width: 100%;
+}
+
+.key-add-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.key-add-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-pool-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.key-pool-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.key-meta {
+  display: flex;
+  flex-direction: column;
+}
+
+.key-status-cooldown {
+  color: #a1521a;
+  font-size: 12px;
+}
+
+.key-status-ready {
+  color: #2c6e49;
+  font-size: 12px;
+}
+
+/* Phần 3: Thanh nhân vật trượt cạnh phải */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background-color: rgba(24, 20, 16, 0.45);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.char-drawer {
+  width: min(86vw, 340px);
+  height: 100%;
+  overflow-y: auto;
+  background-color: var(--paper-surface);
+  border-left: 1px solid var(--border);
+  padding: 18px 16px;
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.16);
+}
+
+.char-drawer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.char-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: #fff;
+  cursor: pointer;
+}
+
+.char-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.char-card-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.char-card-state {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+
+.char-del-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+/* Phần 3: Xem trước kết quả tách codex */
+.codex-review-wrap {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+}
+
+.codex-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.review-char-box {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--paper-surface);
+  font-size: 13px;
+}
+
+.review-char-box input,
+.review-char-box textarea,
+.codex-review-wrap textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.review-label {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
 }

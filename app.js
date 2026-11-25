@@ -61,9 +61,9 @@ function loadSettings() {
 
 function saveSettings(settings) {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    window.StoryDB.setSetting('reader', settings).catch(() => {});
   } catch {
-    // Bỏ qua nếu không ghi được cài đặt (ví dụ chế độ riêng tư)
+    // Bỏ qua nếu IndexedDB chưa sẵn sàng
   }
 }
 
@@ -79,12 +79,10 @@ function loadCodex() {
 
 function saveCodex(nextCodex) {
   try {
-    localStorage.setItem(CODEX_KEY, JSON.stringify(nextCodex));
-  } catch (err) {
-    if (err && err.name === 'QuotaExceededError') {
-      alert('Ảnh chân dung quá lớn nên không lưu được nhân vật. Hãy dùng ảnh nhỏ hơn hoặc dán URL ảnh.');
-    }
-    // Các lỗi khác: bỏ qua như trước
+    const rows = Object.values(nextCodex || {});
+    if (rows.length) window.StoryDB.db.characters.bulkPut(rows).catch(() => {});
+  } catch {
+    // Bỏ qua nếu IndexedDB chưa sẵn sàng
   }
 }
 
@@ -100,12 +98,14 @@ function loadDocxCodex() {
 
 function saveDocxCodex(doc) {
   try {
-    localStorage.setItem(DOCX_CODEX_KEY, JSON.stringify(doc));
-  } catch (err) {
-    if (err && err.name === 'QuotaExceededError') {
-      alert('File DOCX quá lớn nên không lưu được. Hãy dùng file nhỏ hơn.');
-    }
-    // Các lỗi khác: bỏ qua như trước
+    window.StoryDB.db.worldRules.add({
+      type: 'raw_docx',
+      title: doc.fileName || 'codex.docx',
+      content: doc.text || '',
+      updatedAt: doc.updatedAt || Date.now()
+    }).catch(() => {});
+  } catch {
+    // Bỏ qua nếu IndexedDB chưa sẵn sàng
   }
 }
 
@@ -126,6 +126,85 @@ function renderDocxPreview(doc) {
   nameEl.textContent = doc.fileName;
   previewEl.textContent = doc.text;
   wrapEl.classList.remove('hidden');
+  document.getElementById('auto-parse-docx-btn').classList.toggle('hidden', !doc || !doc.text);
+}
+
+async function refreshSettingsUI() {
+  const apiConfig = await window.StoryDB.getSetting('apiConfig', { freeOnlyMode: false, dailyCap: 100 });
+  document.getElementById('free-only-toggle').checked = Boolean(apiConfig.freeOnlyMode);
+  document.getElementById('daily-cap-input').value = apiConfig.dailyCap || 100;
+
+  const budget = await window.RequestQueue.getBudgetState();
+  document.getElementById('budget-display').textContent = `${budget.used}/${budget.cap} calls hôm nay`;
+
+  const pool = await window.KeyPoolManager.refreshExpiredCooldowns();
+  const listEl = document.getElementById('key-pool-list');
+  listEl.innerHTML = '';
+
+  pool.forEach((item) => {
+    const li = document.createElement('li');
+    li.className = 'key-pool-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'key-meta';
+    const title = document.createElement('strong');
+    title.textContent = `${item.label} (${item.provider.toUpperCase()})`;
+    const status = document.createElement('span');
+
+    if (item.status === 'cooldown' && item.cooldownUntil) {
+      const remainMin = Math.max(1, Math.ceil((item.cooldownUntil - Date.now()) / 60000));
+      const h = Math.floor(remainMin / 60);
+      const m = remainMin % 60;
+      status.className = 'key-status-cooldown';
+      status.textContent = `Nghỉ 24h — còn ${h}g ${m}p`;
+    } else {
+      status.className = 'key-status-ready';
+      status.textContent = `Sẵn sàng (${item.requestsToday || 0} calls)`;
+    }
+
+    meta.appendChild(title);
+    meta.appendChild(status);
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'step-btn';
+    delBtn.textContent = 'Xóa';
+    delBtn.addEventListener('click', async () => {
+      await window.KeyPoolManager.removeKey(item.id);
+      await refreshSettingsUI();
+    });
+
+    li.appendChild(meta);
+    li.appendChild(delBtn);
+    listEl.appendChild(li);
+  });
+}
+
+let cooldownTimer = null;
+function startCooldownBanner(resumeAt) {
+  const banner = document.getElementById('cooldown-banner');
+  if (cooldownTimer) clearInterval(cooldownTimer);
+  if (!resumeAt) {
+    banner.classList.add('hidden');
+    return;
+  }
+
+  const tick = () => {
+    const diff = resumeAt - Date.now();
+    if (diff <= 0) {
+      clearInterval(cooldownTimer);
+      banner.classList.add('hidden');
+      refreshSettingsUI();
+      return;
+    }
+    const h = String(Math.floor(diff / 3600000)).padStart(2, '0');
+    const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0');
+    const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0');
+    banner.textContent = `Tất cả API key đang nghỉ 24h. Tự mở khóa sau ${h}:${m}:${s}`;
+    banner.classList.remove('hidden');
+  };
+  tick();
+  cooldownTimer = setInterval(tick, 1000);
 }
 
 function applySettings(settings) {
@@ -229,9 +308,113 @@ function renderChapter(chapter) {
   });
 }
 
+let pendingParsedCodex = null;
+
+function renderCharDrawer() {
+  const list = document.getElementById('char-drawer-list');
+  list.innerHTML = '';
+  const chars = Object.values(codex);
+
+  if (chars.length === 0) {
+    list.innerHTML = '<p class="docx-status">Chưa có nhân vật nào.</p>';
+    return;
+  }
+
+  chars.forEach((char) => {
+    const card = document.createElement('div');
+    card.className = 'char-card';
+    card.addEventListener('click', () => {
+      document.getElementById('char-drawer-backdrop').classList.add('hidden');
+      openCodex(char.name);
+    });
+
+    if (char.portrait) {
+      const wrap = document.createElement('div');
+      wrap.className = 'dialogue-avatar-btn';
+      wrap.style.marginTop = '2px';
+      const img = document.createElement('img');
+      img.className = 'dialogue-avatar-img';
+      img.src = char.portrait;
+      img.alt = char.name;
+      wrap.appendChild(img);
+      card.appendChild(wrap);
+    }
+
+    const info = document.createElement('div');
+    info.className = 'char-card-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'char-card-name';
+    nameEl.textContent = char.name;
+
+    const st = char.state || {};
+    const stateParts = [
+      st.level ? `Level: ${st.level}` : '',
+      st.injuries ? `Thương tích: ${st.injuries}` : '',
+      st.inventory ? `Túi đồ: ${st.inventory}` : ''
+    ].filter(Boolean);
+
+    const stateEl = document.createElement('div');
+    stateEl.className = 'char-card-state';
+    stateEl.textContent =
+      stateParts.join(' • ') || (char.portrait ? 'Nhân vật chính' : 'Nhân vật phụ (chưa có ảnh)');
+
+    info.appendChild(nameEl);
+    info.appendChild(stateEl);
+    card.appendChild(info);
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'char-del-btn';
+    delBtn.textContent = '×';
+    delBtn.title = 'Xóa nhân vật';
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      delete codex[char.name];
+      await window.StoryDB.db.characters.delete(char.name);
+      renderCharDrawer();
+      renderChapter(MOCK_CHAPTER);
+    });
+    card.appendChild(delBtn);
+
+    list.appendChild(card);
+  });
+}
+
+function renderCodexReview(parsed) {
+  pendingParsedCodex = parsed;
+  const wrap = document.getElementById('codex-review-wrap');
+  const info = document.getElementById('codex-review-info');
+  const list = document.getElementById('codex-review-list');
+
+  info.textContent = `Đã tách (${parsed.source === 'regex' ? 'Regex 0 API call' : 'Gemini Flash-Lite'}): ${parsed.characters.length} nhân vật. Kiểm tra trước khi lưu:`;
+  list.innerHTML = '';
+
+  parsed.characters.forEach((c, idx) => {
+    const box = document.createElement('div');
+    box.className = 'review-char-box';
+    box.innerHTML = `
+      <label class="review-label">Tên nhân vật</label>
+      <input type="text" data-idx="${idx}" data-field="name" />
+      <label class="review-label">Ngoại hình</label>
+      <textarea rows="2" data-idx="${idx}" data-field="appearance"></textarea>
+      <label class="review-label">Tính cách</label>
+      <textarea rows="2" data-idx="${idx}" data-field="personality"></textarea>
+    `;
+    box.querySelector('[data-field="name"]').value = c.name || '';
+    box.querySelector('[data-field="appearance"]').value = c.appearance || '';
+    box.querySelector('[data-field="personality"]').value = c.personality || '';
+    list.appendChild(box);
+  });
+
+  document.getElementById('review-hard-rules').value = (parsed.hardRules || []).join('\n');
+  document.getElementById('review-soft-lore').value = (parsed.softLore || []).join('\n');
+  wrap.classList.remove('hidden');
+}
+
 function openCodex(charName) {
   const char = codex[charName];
   if (!char) return;
+  const st = char.state || { level: '', injuries: '', inventory: '' };
 
   const portraitEl = document.getElementById('codex-portrait');
   if (char.portrait) {
@@ -247,7 +430,44 @@ function openCodex(charName) {
   document.getElementById('codex-kind').textContent = char.portrait
     ? 'Nhân vật có ảnh chân dung'
     : 'Nhân vật phụ (chưa có ảnh)';
-  document.getElementById('codex-body').textContent = char.description;
+
+  const summary = [
+    char.aliases ? `Biệt danh: ${char.aliases}` : '',
+    char.appearance ? `Ngoại hình: ${char.appearance}` : '',
+    char.personality || char.description || '',
+    char.skills_abilities ? `Kỹ năng: ${char.skills_abilities}` : '',
+    char.speech_style ? `Giọng điệu: ${char.speech_style}` : '',
+    char.hard_constraints ? `Ràng buộc: ${char.hard_constraints}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const body = document.getElementById('codex-body');
+  body.innerHTML = `
+    <p style="margin-top:0;white-space:pre-line;"></p>
+    <div class="setting-divider codex-form">
+      <p class="form-section-title">Trạng thái động (sửa trực tiếp)</p>
+      <div class="setting-group"><label>Level / Vị trí</label><input id="state-level" type="text" /></div>
+      <div class="setting-group"><label>Thương tích / Tinh thần</label><input id="state-injuries" type="text" /></div>
+      <div class="setting-group"><label>Túi đồ hiện tại</label><input id="state-inventory" type="text" /></div>
+      <button id="save-char-state-btn" type="button" class="primary-btn">Lưu trạng thái</button>
+    </div>
+  `;
+  body.querySelector('p').textContent = summary || 'Chưa có mô tả.';
+  body.querySelector('#state-level').value = st.level || '';
+  body.querySelector('#state-injuries').value = st.injuries || '';
+  body.querySelector('#state-inventory').value = st.inventory || '';
+
+  body.querySelector('#save-char-state-btn').addEventListener('click', async () => {
+    char.state = {
+      level: body.querySelector('#state-level').value.trim(),
+      injuries: body.querySelector('#state-injuries').value.trim(),
+      inventory: body.querySelector('#state-inventory').value.trim()
+    };
+    await window.StoryDB.db.characters.put(char);
+    renderCharDrawer();
+    document.getElementById('codex-modal').classList.add('hidden');
+  });
 
   document.getElementById('codex-modal').classList.remove('hidden');
 }
@@ -359,18 +579,136 @@ function setupEvents(settings) {
       }
     }
 
-    codex[name] = { name, description, portrait };
+    codex[name] = { ...(codex[name] || {}), name, description, portrait };
     saveCodex(codex);
     renderChapter(MOCK_CHAPTER);
 
     e.target.reset();
     importModal.classList.add('hidden');
   });
+
+  // Phần 2: Pool Key, công tắc free-only, daily cap, status listener
+  document.getElementById('free-only-toggle').addEventListener('change', async (e) => {
+    const cfg = await window.StoryDB.getSetting('apiConfig', {});
+    cfg.freeOnlyMode = e.target.checked;
+    await window.StoryDB.setSetting('apiConfig', cfg);
+  });
+
+  document.getElementById('daily-cap-input').addEventListener('change', async (e) => {
+    const cfg = await window.StoryDB.getSetting('apiConfig', {});
+    cfg.dailyCap = Math.max(10, Number(e.target.value) || 100);
+    await window.StoryDB.setSetting('apiConfig', cfg);
+    await refreshSettingsUI();
+  });
+
+  document.getElementById('add-key-btn').addEventListener('click', async () => {
+    const provider = document.getElementById('key-provider-select').value;
+    const label = document.getElementById('key-label-input').value;
+    const apiKey = document.getElementById('key-value-input').value.trim();
+    if (!apiKey) return;
+    await window.KeyPoolManager.addKey({ provider, label, apiKey });
+    document.getElementById('key-label-input').value = '';
+    document.getElementById('key-value-input').value = '';
+    await refreshSettingsUI();
+  });
+
+  window.RequestQueue.setStatusListener((state) => {
+    if (state.type === 'budget') {
+      document.getElementById('budget-display').textContent = `${state.used}/${state.cap} calls hôm nay`;
+    } else if (state.type === 'all_cooldown') {
+      startCooldownBanner(state.resumeAt);
+      refreshSettingsUI();
+    } else if (state.type === 'waiting') {
+      const banner = document.getElementById('cooldown-banner');
+      banner.textContent = `${state.reason} — tự thử lại sau ${state.waitSec}s...`;
+      banner.classList.remove('hidden');
+    }
+  });
+
+  // Phần 3: Drawer nhân vật + Tách codex tự động + Duyệt & Lưu
+  const drawerBackdrop = document.getElementById('char-drawer-backdrop');
+  document.getElementById('chars-btn').addEventListener('click', () => {
+    renderCharDrawer();
+    drawerBackdrop.classList.remove('hidden');
+  });
+  document.getElementById('close-drawer-btn').addEventListener('click', () => {
+    drawerBackdrop.classList.add('hidden');
+  });
+  drawerBackdrop.addEventListener('click', (e) => {
+    if (e.target === drawerBackdrop) drawerBackdrop.classList.add('hidden');
+  });
+  document.getElementById('drawer-add-char-btn').addEventListener('click', () => {
+    drawerBackdrop.classList.add('hidden');
+    renderDocxPreview(docxCodex);
+    importModal.classList.remove('hidden');
+  });
+
+  document.getElementById('auto-parse-docx-btn').addEventListener('click', async () => {
+    if (!docxCodex?.text) return;
+    const statusEl = document.getElementById('docx-status');
+    statusEl.textContent = 'Đang tách codex...';
+    try {
+      const parsed = await window.CodexParser.autoSplitDocxCodex(docxCodex.text);
+      renderCodexReview(parsed);
+      statusEl.textContent = 'Tách hoàn tất. Hãy duyệt trước khi lưu.';
+    } catch (err) {
+      statusEl.textContent = `Lỗi tách codex: ${err.message}`;
+    }
+  });
+
+  document.getElementById('save-parsed-codex-btn').addEventListener('click', async () => {
+    if (!pendingParsedCodex) return;
+    document.querySelectorAll('#codex-review-list [data-idx]').forEach((el) => {
+      const item = pendingParsedCodex.characters[Number(el.dataset.idx)];
+      if (item) item[el.dataset.field] = el.value.trim();
+    });
+
+    const validChars = pendingParsedCodex.characters.filter((c) => c.name);
+    for (const c of validChars) {
+      const existing = codex[c.name];
+      const merged = { ...c, portrait: existing?.portrait || c.portrait || '', state: existing?.state || c.state };
+      codex[merged.name] = merged;
+      await window.StoryDB.db.characters.put(merged);
+    }
+
+    const hardRules = document.getElementById('review-hard-rules').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const softLore = document.getElementById('review-soft-lore').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    // Chỉ thay loại nào có dữ liệu mới — tránh xóa luật cũ khi bản tách không có luật đó
+    if (hardRules.length) {
+      await window.StoryDB.db.worldRules.where('type').equals('hard_rule').delete();
+      await window.StoryDB.db.worldRules.bulkAdd(hardRules.map((content) => ({ type: 'hard_rule', content })));
+    }
+    if (softLore.length) {
+      await window.StoryDB.db.worldRules.where('type').equals('soft_lore').delete();
+      await window.StoryDB.db.worldRules.bulkAdd(softLore.map((content) => ({ type: 'soft_lore', content })));
+    }
+
+    document.getElementById('codex-review-wrap').classList.add('hidden');
+    renderCharDrawer();
+    renderChapter(MOCK_CHAPTER);
+    importModal.classList.add('hidden');
+  });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const settings = loadSettings();
+document.addEventListener('DOMContentLoaded', async () => {
+  let settings = loadSettings();
+  let dbReady = false;
+
+  try {
+    await window.StoryDB.initDatabase(DEFAULT_CODEX, DEFAULT_SETTINGS);
+    settings = await window.StoryDB.getSetting('reader', DEFAULT_SETTINGS);
+    const chars = await window.StoryDB.db.characters.toArray();
+    codex = Object.fromEntries(chars.map((c) => [c.name, c]));
+    const latestDocx = await window.StoryDB.db.worldRules.where('type').equals('raw_docx').last();
+    if (latestDocx) docxCodex = { fileName: latestDocx.title, text: latestDocx.content };
+    dbReady = true;
+  } catch {
+    // Dexie/CDN lỗi: dùng dữ liệu localStorage như Phần 1, trang vẫn đọc được
+    settings = loadSettings();
+  }
+
   applySettings(settings);
   renderChapter(MOCK_CHAPTER);
   setupEvents(settings);
+  if (dbReady) await refreshSettingsUI();
 });

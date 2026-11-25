@@ -8,7 +8,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/dexie@4.4.7/dist/dexie.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.11.0/mammoth.browser.min.js" defer></script>
+  <script src="db.js" defer></script>
+  <script src="llm.js" defer></script>
+  <script src="keypool.js" defer></script>
+  <script src="queue.js" defer></script>
+  <script src="codex.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -20,8 +26,17 @@
       </svg>
     </button>
     <h1 id="chapter-title" class="chapter-title">CHAPTER 1</h1>
-    <div class="topbar-spacer" aria-hidden="true"></div>
+    <button id="chars-btn" class="icon-btn" aria-label="Nhân vật" title="Danh sách nhân vật">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+        <circle cx="9" cy="7" r="4"></circle>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+      </svg>
+    </button>
   </header>
+
+  <div id="cooldown-banner" class="cooldown-banner hidden"></div>
 
   <main class="book-container">
     <article id="story-content" class="book-page"></article>
@@ -53,6 +68,35 @@
         </div>
       </div>
       <div class="setting-group setting-divider">
+        <div class="budget-row">
+          <span>Ngân sách hôm nay</span>
+          <strong id="budget-display">0/100 calls hôm nay</strong>
+        </div>
+        <label for="daily-cap-input">Giới hạn tối đa mỗi ngày (calls)</label>
+        <input id="daily-cap-input" type="number" min="10" max="2000" value="100" />
+        <label class="toggle-row">
+          <input id="free-only-toggle" type="checkbox" />
+          <span>Chỉ chạy 100% miễn phí (bỏ qua Claude)</span>
+        </label>
+      </div>
+
+      <div class="setting-group setting-divider">
+        <label>Pool API Key (lưu cục bộ trên máy)</label>
+        <div class="key-add-row">
+          <select id="key-provider-select">
+            <option value="gemini">Gemini (Free)</option>
+            <option value="claude">Claude Sonnet 5.5</option>
+          </select>
+          <input id="key-label-input" type="text" placeholder="Tên (VD: Project 1)" />
+        </div>
+        <div class="key-add-row">
+          <input id="key-value-input" type="password" placeholder="Dán API key..." />
+          <button id="add-key-btn" type="button" class="step-btn">Thêm</button>
+        </div>
+        <ul id="key-pool-list" class="key-pool-list"></ul>
+      </div>
+
+      <div class="setting-group setting-divider">
         <button id="open-import-codex-btn" type="button" class="primary-btn">
           Nhập codex / wiki nhân vật
         </button>
@@ -78,6 +122,20 @@
         <div id="docx-preview-wrap" class="docx-preview-wrap hidden">
           <div id="docx-filename" class="docx-filename"></div>
           <pre id="docx-preview" class="docx-preview"></pre>
+        </div>
+        <button id="auto-parse-docx-btn" type="button" class="secondary-btn hidden" style="margin-top:10px;">
+          Tách codex tự động
+        </button>
+        <div id="codex-review-wrap" class="codex-review-wrap hidden">
+          <p id="codex-review-info" class="docx-status"></p>
+          <div id="codex-review-list" class="codex-review-list"></div>
+          <label class="review-label">Hard Rules (mỗi dòng 1 luật)</label>
+          <textarea id="review-hard-rules" rows="3"></textarea>
+          <label class="review-label">Soft Lore (mỗi dòng 1 mục)</label>
+          <textarea id="review-soft-lore" rows="3"></textarea>
+          <button id="save-parsed-codex-btn" type="button" class="primary-btn" style="margin-top:10px;">
+            Duyệt & Lưu vào IndexedDB
+          </button>
         </div>
       </div>
 
@@ -117,6 +175,20 @@
       </div>
       <div id="codex-body" class="codex-body"></div>
     </div>
+  </div>
+
+  <!-- Thanh nhân vật (Drawer) -->
+  <div id="char-drawer-backdrop" class="drawer-backdrop hidden">
+    <aside class="char-drawer" aria-label="Danh sách nhân vật">
+      <div class="modal-header">
+        <h2>Nhân vật</h2>
+        <button id="close-drawer-btn" class="close-btn" aria-label="Đóng">&times;</button>
+      </div>
+      <button id="drawer-add-char-btn" type="button" class="primary-btn" style="margin-bottom:12px;">
+        + Thêm nhân vật
+      </button>
+      <div id="char-drawer-list" class="char-drawer-list"></div>
+    </aside>
   </div>
 </body>
 </html>
