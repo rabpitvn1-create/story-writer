@@ -99,7 +99,7 @@ L4: ${l4Text || 'Không có'}`;
   }
 }
 
-async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, prefsDirective = '' }) {
+async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '' }) {
   const systemPrompt = `${l1}\n\n${window.StoryMemory.VOICE_HANDBOOK}\n\n${window.StoryMemory.VOICE_ANCHORS}`;
   const isLast = scene.index === totalScenes;
 
@@ -119,8 +119,9 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
     maxTokens: 4096,
     temperature: 0.85,
     stream: true,
-    onToken: (_, full) => {
+    onToken: (chunk, full) => {
       if (onProgress) onProgress(window.StoryMemory.countWords(full));
+      if (onChunk && chunk) onChunk(chunk, full);
     },
     signal
   });
@@ -129,6 +130,7 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
   let words = window.StoryMemory.countWords(text);
   if (words < 1700) {
     const tail = text.split(/\s+/).slice(-450).join(' ');
+    let firstExtraChunk = true;
     const extra = await window.RequestQueue.enqueue({
       lane: 'writer',
       systemPrompt,
@@ -141,6 +143,13 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
       maxTokens: 2500,
       temperature: 0.85,
       stream: true,
+      onToken: (chunk, fullExtra) => {
+        if (onProgress) onProgress(words + window.StoryMemory.countWords(fullExtra));
+        if (onChunk && chunk) {
+          onChunk(firstExtraChunk ? `\n\n${chunk}` : chunk, `${text}\n\n${fullExtra}`);
+          firstExtraChunk = false;
+        }
+      },
       signal
     });
     text = `${text.trim()}\n\n${extra.trim()}`;
@@ -225,12 +234,25 @@ Nội dung chương:\n${excerpt}`;
   await window.StoryMemory.saveL2Ledger(nextLedger);
 }
 
-async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }) {
+async function writeNextChapter({
+  onStatus,
+  onChapterReady,
+  onChapterStart,
+  onSceneStream,
+  onSceneDone,
+  onAborted,
+  onError,
+  userDirection = ''
+}) {
   if (isWriting) return;
   isWriting = true;
   gracefulStopRequested = false;
   activeAbortController = new AbortController();
   const signal = activeAbortController.signal;
+
+  let currentSceneNum = 1;
+  let totalScenesCount = 3;
+  let outline = null;
 
   try {
     const draft = await window.StoryDB.getSetting('chapter_draft', null);
@@ -243,13 +265,16 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
     const outlineQuery = [userDirection, l2.location, ...(l2.openHooks || [])].filter(Boolean).join(' ');
     const l4Hits = await window.StoryMemory.searchL4Chapters(outlineQuery, 2);
 
-    let outline = draft?.outline;
-    let sceneTexts = draft?.sceneTexts || [];
+    outline = draft?.outline;
+    let sceneTexts = Array.isArray(draft?.sceneTexts) ? [...draft.sceneTexts] : [];
 
     // Đã có bản nháp thì dàn ý giữ nguyên — gợi ý mới không áp dụng cho chương này
     if (draft?.outline && userDirection) {
       onStatus(`Chương ${chapterNumber}: đang viết tiếp từ bản nháp, gợi ý mới không áp dụng cho chương này.`);
     }
+
+    // Mở trang sách ngay lập tức và hiện sẵn các cảnh đã có trong draft (nếu đang viết tiếp)
+    if (onChapterStart) onChapterStart(chapterNumber, sceneTexts);
 
     if (!outline) {
       const creativity = window.EndlessManager
@@ -261,19 +286,21 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
 
+    totalScenesCount = outline.scenes.length;
     let linterNotes = [];
     for (let i = sceneTexts.length; i < outline.scenes.length; i++) {
+      currentSceneNum = i + 1;
       const scene = outline.scenes[i];
       const prevText = sceneTexts[i - 1] || '';
       const rollingTail = prevText ? prevText.split(/\s+/).slice(-650).join(' ') : '';
       const sceneQuery = `${scene.goal || ''} ${scene.beats || ''}`.trim();
       const sceneL1 = await window.StoryMemory.getL1HardCanon(sceneQuery, true);
 
-      onStatus(`Chương ${chapterNumber}: Đang viết cảnh ${i + 1}/3...`);
+      onStatus(`Chương ${chapterNumber}: Đang viết cảnh ${i + 1}/${totalScenesCount}...`);
       const sceneText = await writeSingleScene({
         chapterNumber,
         scene,
-        totalScenes: outline.scenes.length,
+        totalScenes: totalScenesCount,
         l1: sceneL1,
         l2,
         l3,
@@ -281,14 +308,20 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
         linterNotes,
         signal,
         prefsDirective,
-        onProgress: (w) => onStatus(`Chương ${chapterNumber}: Cảnh ${i + 1}/3 (${w} từ)...`)
+        onProgress: (w) => onStatus(`Chương ${chapterNumber}: Cảnh ${i + 1}/${totalScenesCount} (${w} từ)...`),
+        onChunk: (chunk, full) => {
+          if (onSceneStream) onSceneStream(chunk, full, i);
+        }
       });
 
       // Cảnh rỗng thì không lưu — lần chạy sau sẽ viết lại đúng cảnh đó
-      if (sceneText.trim()) sceneTexts.push(sceneText);
-      linterNotes = window.StoryMemory.lintScene(sceneText);
-      // Checkpoint ngay sau mỗi cảnh
-      await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
+      if (sceneText && sceneText.trim()) {
+        sceneTexts.push(sceneText);
+        linterNotes = window.StoryMemory.lintScene(sceneText);
+        // Checkpoint ngay sau mỗi cảnh
+        await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
+        if (onSceneDone) onSceneDone(i, sceneText);
+      }
       // Dừng nhẹ: dừng sau cảnh vừa viết xong, hoàn tất chương với các cảnh đã có
       if (gracefulStopRequested) break;
     }
@@ -318,9 +351,17 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
     if (onChapterReady) onChapterReady(chapterRecord, gracefulStopRequested);
   } catch (err) {
     if (err.name === 'AbortError') {
-      onStatus('Đã dừng khẩn cấp. Tiến độ các cảnh đã viết được giữ an toàn.');
+      if (outline) {
+        onStatus(`Đã dừng khẩn cấp ở Cảnh ${currentSceneNum}/${totalScenesCount}. Các cảnh đã xong được giữ an toàn.`);
+        if (onAborted) onAborted(currentSceneNum, totalScenesCount);
+      } else {
+        // Ngắt khi chưa lập xong dàn ý: chưa có cảnh nào, chỉ dọn con trỏ nhấp nháy
+        onStatus('Đã dừng khẩn cấp trước khi lập dàn ý xong.');
+        if (onError) onError(err);
+      }
     } else {
       onStatus(`Tạm dừng: ${err.message}`);
+      if (onError) onError(err);
     }
   } finally {
     isWriting = false;
@@ -337,6 +378,7 @@ function requestGracefulStop() {
 }
 
 window.ChapterEngine = {
+  parseTextToBlocks,
   writeNextChapter,
   hardStop,
   requestGracefulStop,

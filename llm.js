@@ -143,7 +143,7 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
 
 // Gọi qua proxy có sẵn của anh (Render): proxy giữ key ở server nên app không cần key.
 // Proxy không hỗ trợ streaming — luôn gọi không-stream và đọc full JSON trả về.
-async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, signal }) {
+async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, signal, onToken }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
@@ -166,7 +166,11 @@ async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4
   }
 
   const data = await res.json();
-  return data.choices?.[0]?.message?.content || '';
+  const content = data.choices?.[0]?.message?.content || '';
+  // Proxy không stream: trả cả cục một lần, nhưng vẫn bắn onToken 1 lần để
+  // luồng đọc dần (typewriter) chạy được như với key trực tiếp.
+  if (onToken) onToken(content, content);
+  return content;
 }
 
 async function callLLM(params) {

@@ -356,48 +356,309 @@ function renderChapter(chapter) {
   container.innerHTML = '';
 
   chapter.blocks.forEach((block) => {
-    if (block.type === 'narrative') {
-      const p = document.createElement('p');
-      p.className = 'narrative-p';
-      appendLinkedText(p, block.text);
-      container.appendChild(p);
-    } else if (block.type === 'dialogue') {
-      const char = codex[block.speaker];
-      const hasPortrait = Boolean(char && char.portrait);
-      const row = document.createElement('div');
-      row.className = 'dialogue-row';
-
-      if (hasPortrait) {
-        const avatarBtn = document.createElement('button');
-        avatarBtn.type = 'button';
-        avatarBtn.className = 'dialogue-avatar-btn';
-        avatarBtn.title = `Xem hồ sơ ${char.name}`;
-        avatarBtn.addEventListener('click', () => openCodex(char.name));
-
-        const img = document.createElement('img');
-        img.className = 'dialogue-avatar-img';
-        img.src = char.portrait;
-        img.alt = char.name;
-
-        avatarBtn.appendChild(img);
-        row.appendChild(avatarBtn);
-      }
-
-      const p = document.createElement('p');
-      p.className = 'dialogue-text';
-
-      const speakerWrap = document.createElement('span');
-      speakerWrap.className = 'speaker-label';
-      appendLinkedText(speakerWrap, block.speaker);
-      p.appendChild(speakerWrap);
-      p.appendChild(document.createTextNode(': '));
-      appendLinkedText(p, block.text);
-
-      row.appendChild(p);
-      container.appendChild(row);
-    }
+    const el = createBlockElement(block);
+    if (el) container.appendChild(el);
   });
 }
+
+// Đọc dần khi đang viết (streaming/typewriter) — chữ hiện dần như tin nhắn đang gõ
+// HẰNG SỐ TỐC ĐỘ NHẢ CHỮ DUY NHẤT (từ/phút) — chỉnh ở đây để nhanh/chậm hơn:
+// 1300 từ/phút ≈ 2 từ mỗi 92ms (nhịp chậm rãi, đằm, giống Gemini đang gõ trả lời)
+const TYPEWRITER_SPEED_WPM = 1300;
+const TYPEWRITER_WORDS_PER_TICK = 2;
+const TYPEWRITER_TICK_MS = Math.max(40, Math.round((TYPEWRITER_WORDS_PER_TICK * 60000) / TYPEWRITER_SPEED_WPM));
+
+// Tái dùng chung cho cả renderChapter và StreamRenderer -> hiển thị giống hệt 100%
+function createBlockElement(block) {
+  if (block.type === 'narrative') {
+    const p = document.createElement('p');
+    p.className = 'narrative-p';
+    appendLinkedText(p, block.text);
+    return p;
+  }
+
+  if (block.type === 'dialogue') {
+    const char = codex[block.speaker];
+    const hasPortrait = Boolean(char && char.portrait);
+    const row = document.createElement('div');
+    row.className = 'dialogue-row';
+
+    if (hasPortrait) {
+      const avatarBtn = document.createElement('button');
+      avatarBtn.type = 'button';
+      avatarBtn.className = 'dialogue-avatar-btn';
+      avatarBtn.title = `Xem hồ sơ ${char.name}`;
+      avatarBtn.addEventListener('click', () => openCodex(char.name));
+
+      const img = document.createElement('img');
+      img.className = 'dialogue-avatar-img';
+      img.src = char.portrait;
+      img.alt = char.name;
+
+      avatarBtn.appendChild(img);
+      row.appendChild(avatarBtn);
+    }
+
+    const p = document.createElement('p');
+    p.className = 'dialogue-text';
+
+    const speakerWrap = document.createElement('span');
+    speakerWrap.className = 'speaker-label';
+    appendLinkedText(speakerWrap, block.speaker);
+    p.appendChild(speakerWrap);
+    p.appendChild(document.createTextNode(': '));
+    appendLinkedText(p, block.text);
+
+    row.appendChild(p);
+    return row;
+  }
+
+  return null;
+}
+
+const StreamRenderer = {
+  active: false,
+  autoFollow: true,
+  queueTokens: [],       // Mảng từ chờ nhả dần khi proxy trả 1 cục lớn
+  pendingLine: '',       // Dòng đang gõ dở (chưa gặp \n)
+  sceneReceivedText: false,
+  typeTimer: null,
+  sseThrottleTimer: null,
+  ssePendingChunk: '',
+  tailEl: null,
+  followBtn: null,
+  skipBtn: null,
+  scrollHandlerBound: null,
+
+  ensureFloatingControls() {
+    if (!this.followBtn) {
+      this.followBtn = document.createElement('button');
+      this.followBtn.type = 'button';
+      this.followBtn.className = 'stream-float-btn follow-btn hidden';
+      this.followBtn.textContent = '↓ Đang viết tiếp';
+      this.followBtn.addEventListener('click', () => {
+        this.autoFollow = true;
+        this.followBtn.classList.add('hidden');
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+      });
+      document.body.appendChild(this.followBtn);
+    }
+    if (!this.skipBtn) {
+      this.skipBtn = document.createElement('button');
+      this.skipBtn.type = 'button';
+      this.skipBtn.className = 'stream-float-btn skip-btn hidden';
+      this.skipBtn.textContent = 'Hiện hết cảnh ⏭';
+      this.skipBtn.addEventListener('click', () => this.flushAll());
+      document.body.appendChild(this.skipBtn);
+    }
+  },
+
+  bindScrollWatcher() {
+    if (this.scrollHandlerBound) return;
+    this.scrollHandlerBound = () => {
+      if (!this.active) return;
+      const dist = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+      if (dist < 120) {
+        this.autoFollow = true;
+        this.followBtn?.classList.add('hidden');
+      } else {
+        this.autoFollow = false;
+        this.followBtn?.classList.remove('hidden');
+      }
+    };
+    window.addEventListener('scroll', this.scrollHandlerBound, { passive: true });
+  },
+
+  start(chapterNumber, existingScenes = []) {
+    this.stopTimers();
+    this.ensureFloatingControls();
+    this.bindScrollWatcher();
+
+    this.active = true;
+    this.autoFollow = true;
+    this.queueTokens = [];
+    this.pendingLine = '';
+    this.ssePendingChunk = '';
+    this.sceneReceivedText = false;
+
+    if (typeof showEmptyStartScreen === 'function') showEmptyStartScreen(false);
+    document.getElementById('chapter-title').textContent = `CHAPTER ${chapterNumber}`;
+    const container = document.getElementById('story-content');
+    container.innerHTML = '';
+
+    // Nếu đang viết tiếp từ draft, render sẵn các cảnh đã lưu trước đó
+    existingScenes.forEach((scText) => {
+      const blocks = window.ChapterEngine.parseTextToBlocks(scText);
+      blocks.forEach((b) => {
+        const el = createBlockElement(b);
+        if (el) container.appendChild(el);
+      });
+    });
+
+    this.tailEl = document.createElement('p');
+    this.tailEl.id = 'streaming-tail';
+    this.tailEl.className = 'narrative-p stream-tail';
+    container.appendChild(this.tailEl);
+
+    this.followBtn.classList.add('hidden');
+    this.skipBtn.classList.add('hidden');
+  },
+
+  // Nhận chunk từ onToken: tự phân biệt cục lớn (proxy) vs chunk nhỏ (SSE thật)
+  pushChunk(chunk) {
+    if (!this.active || !chunk) return;
+    this.sceneReceivedText = true;
+
+    if (chunk.length > 120) {
+      // Proxy non-streaming trả về cả cục -> tách thành từng từ + khoảng trắng/xuống dòng để nhả dần
+      const tokens = chunk.match(/\S+\s*|\s+/g) || [chunk];
+      this.queueTokens.push(...tokens);
+      this.skipBtn?.classList.remove('hidden');
+      this.startTypewriter();
+    } else {
+      // SSE streaming thật từ key trực tiếp -> throttle 60ms để không giật DOM
+      this.ssePendingChunk += chunk;
+      if (!this.sseThrottleTimer) {
+        this.sseThrottleTimer = setTimeout(() => {
+          const batch = this.ssePendingChunk;
+          this.ssePendingChunk = '';
+          this.sseThrottleTimer = null;
+          if (batch) this.feedText(batch);
+        }, 60);
+      }
+    }
+  },
+
+  startTypewriter() {
+    if (this.typeTimer) return;
+    this.typeTimer = setInterval(() => {
+      if (this.queueTokens.length === 0) {
+        clearInterval(this.typeTimer);
+        this.typeTimer = null;
+        this.skipBtn?.classList.add('hidden');
+        return;
+      }
+      const step = this.queueTokens.splice(0, TYPEWRITER_WORDS_PER_TICK).join('');
+      this.feedText(step);
+    }, TYPEWRITER_TICK_MS);
+  },
+
+  // Append-Only: dòng kết thúc bằng '\n' -> parse block sách chuẩn & chốt DOM;
+  // phần cuối dở dang giữ ở #streaming-tail
+  feedText(str) {
+    const container = document.getElementById('story-content');
+    if (!container || !this.tailEl) return;
+
+    const combined = this.pendingLine + str;
+    const parts = combined.split(/\r?\n/);
+    this.pendingLine = parts.pop() || '';
+
+    for (const rawLine of parts) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const blocks = window.ChapterEngine.parseTextToBlocks(line);
+      blocks.forEach((b) => {
+        const el = createBlockElement(b);
+        if (el) container.insertBefore(el, this.tailEl);
+      });
+    }
+
+    this.tailEl.textContent = this.pendingLine;
+
+    if (this.autoFollow) {
+      window.scrollTo({ top: document.documentElement.scrollHeight });
+    }
+  },
+
+  // Xả toàn bộ chữ đang chờ (khi bấm "Hiện hết cảnh", xong cảnh hoặc dừng khẩn)
+  flushAll() {
+    this.stopTimers();
+    let remaining = '';
+    if (this.ssePendingChunk) {
+      remaining += this.ssePendingChunk;
+      this.ssePendingChunk = '';
+    }
+    if (this.queueTokens.length > 0) {
+      remaining += this.queueTokens.join('');
+      this.queueTokens = [];
+    }
+    if (remaining) this.feedText(remaining);
+
+    // Chốt nốt dòng cuối dở dang thành block chuẩn
+    if (this.pendingLine.trim()) {
+      this.feedText('\n');
+    }
+    if (this.tailEl) this.tailEl.textContent = '';
+    this.skipBtn?.classList.add('hidden');
+  },
+
+  onSceneDone(sceneText) {
+    // Dự phòng nếu non-streaming không bắn onToken nào
+    if (!this.sceneReceivedText && sceneText) {
+      this.pushChunk(sceneText);
+    }
+    // Chốt sạch cảnh nếu đang SSE; nếu đang typewriter chậm rãi thì để người đọc đọc tiếp
+    // (cảnh kế tiếp sẽ nối vào queueTokens ngay sau cảnh hiện tại, không bị mất chữ)
+    if (this.queueTokens.length === 0) {
+      this.flushAll();
+    } else {
+      this.queueTokens.push('\n\n');
+    }
+    this.sceneReceivedText = false;
+  },
+
+  showPauseNote(sceneNum, totalScenes) {
+    this.flushAll();
+    const container = document.getElementById('story-content');
+    if (this.tailEl) {
+      this.tailEl.remove();
+      this.tailEl = null;
+    }
+    if (container) {
+      const note = document.createElement('p');
+      note.className = 'stream-pause-note';
+      note.textContent = `— Đã tạm dừng ở Cảnh ${sceneNum}/${totalScenes} — bấm "Viết chương tiếp" để chạy tiếp —`;
+      container.appendChild(note);
+    }
+    this.cleanupUI();
+  },
+
+  finishChapter(chapterRecord) {
+    this.flushAll();
+    if (this.tailEl) {
+      this.tailEl.remove();
+      this.tailEl = null;
+    }
+    this.cleanupUI();
+    // Đồng bộ lại chuẩn 1 lần duy nhất mà giữ nguyên vị trí cuộn của người đọc
+    const savedY = window.scrollY;
+    renderChapter(chapterRecord);
+    window.scrollTo({ top: savedY });
+  },
+
+  stopTimers() {
+    if (this.typeTimer) {
+      clearInterval(this.typeTimer);
+      this.typeTimer = null;
+    }
+    if (this.sseThrottleTimer) {
+      clearTimeout(this.sseThrottleTimer);
+      this.sseThrottleTimer = null;
+    }
+  },
+
+  cleanupUI() {
+    this.active = false;
+    this.stopTimers();
+    // Dọn cả dòng đang gõ dở (lỗi dàn ý thì trang trống không còn con trỏ nhấp nháy)
+    if (this.tailEl) {
+      this.tailEl.remove();
+      this.tailEl = null;
+    }
+    this.followBtn?.classList.add('hidden');
+    this.skipBtn?.classList.add('hidden');
+  }
+};
 
 function renderCharDrawer() {
   const list = document.getElementById('char-drawer-list');
@@ -929,14 +1190,28 @@ function setupEvents(settings) {
       onStatus: (msg) => {
         statusEl.textContent = msg;
       },
+      onChapterStart: (chapterNumber, existingScenes) => {
+        StreamRenderer.start(chapterNumber, existingScenes);
+      },
+      onSceneStream: (chunk) => {
+        StreamRenderer.pushChunk(chunk);
+      },
+      onSceneDone: (_sceneIdx, sceneText) => {
+        StreamRenderer.onSceneDone(sceneText);
+      },
+      onAborted: (sceneNum, totalScenes) => {
+        StreamRenderer.showPauseNote(sceneNum, totalScenes);
+      },
+      onError: () => {
+        StreamRenderer.cleanupUI();
+      },
       onChapterReady: async (chapterRecord) => {
         const chars = await window.StoryDB.db.characters.toArray();
         codex = Object.fromEntries(chars.map((c) => [c.name, c]));
         renderCharDrawer();
         currentChapterNumber = chapterRecord.number;
         showEmptyStartScreen(false);
-        renderChapter(chapterRecord);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        StreamRenderer.finishChapter(chapterRecord);
         if (onDone) onDone(chapterRecord);
       }
     });
@@ -960,6 +1235,7 @@ function setupEvents(settings) {
   });
 
   document.getElementById('hard-stop-btn').addEventListener('click', () => {
+    StreamRenderer.flushAll(); // Xả nốt chữ cảnh đang chạy typewriter trước khi ngắt mạng
     if (window.EndlessManager) window.EndlessManager.stopEndlessHard();
     else window.ChapterEngine.hardStop();
   });
@@ -990,13 +1266,28 @@ function setupEvents(settings) {
       onStatus: (msg) => {
         statusEl.textContent = msg;
       },
+      onChapterStart: (chapterNumber, existingScenes) => {
+        StreamRenderer.start(chapterNumber, existingScenes);
+      },
+      onSceneStream: (chunk) => {
+        StreamRenderer.pushChunk(chunk);
+      },
+      onSceneDone: (_sceneIdx, sceneText) => {
+        StreamRenderer.onSceneDone(sceneText);
+      },
+      onAborted: (sceneNum, totalScenes) => {
+        StreamRenderer.showPauseNote(sceneNum, totalScenes);
+      },
+      onError: () => {
+        StreamRenderer.cleanupUI();
+      },
       onChapterReady: async (chapterRecord) => {
         const chars = await window.StoryDB.db.characters.toArray();
         codex = Object.fromEntries(chars.map((c) => [c.name, c]));
         renderCharDrawer();
         currentChapterNumber = chapterRecord.number;
         showEmptyStartScreen(false);
-        renderChapter(chapterRecord);
+        StreamRenderer.finishChapter(chapterRecord);
       },
       onFinished: () => {
         writeBtn.disabled = false;

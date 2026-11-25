@@ -114,7 +114,7 @@ function auditOutlineContinuity(outline, l2) {
 }
 
 // Vòng lặp Chế độ Vô tận (tối đa 10 chương liên tiếp)
-async function startEndlessMode({ onStatus, onChapterReady, onFinished }) {
+async function startEndlessMode({ onStatus, onChapterReady, onFinished, onChapterStart, onSceneStream, onSceneDone, onAborted, onError }) {
   if (endlessRunning) return;
   endlessRunning = true;
   endlessStopRequested = false;
@@ -128,6 +128,11 @@ async function startEndlessMode({ onStatus, onChapterReady, onFinished }) {
 
       await window.ChapterEngine.writeNextChapter({
         onStatus: (msg) => onStatus(`[Vô tận ${count + 1}/${MAX_CONSECUTIVE_CHAPTERS}] ${msg}`),
+        onChapterStart,
+        onSceneStream,
+        onSceneDone,
+        onAborted,
+        onError,
         onChapterReady: async (ch, graceful) => {
           chapterCompleted = true;
           gracefulFromEngine = graceful;
