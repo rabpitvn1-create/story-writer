@@ -17,7 +17,16 @@ const BANNED_SLOP = [
   'một cách kỳ lạ',
   'khẽ nhếch môi',
   'thời gian như ngừng trôi',
-  'tim đập thình thịch như muốn nhảy ra khỏi lồng ngực'
+  'tim đập thình thịch như muốn nhảy ra khỏi lồng ngực',
+  'không thể diễn tả thành lời',
+  'một luồng khí lạnh',
+  'bầu không khí trở nên nặng nề',
+  'đôi mắt lóe lên tia sáng',
+  'sự im lặng đến đáng sợ',
+  'trong tích tắc',
+  'như có một bàn tay vô hình',
+  'cảm xúc dâng trào',
+  'hít một hơi thật sâu'
 ];
 
 function countWords(text) {

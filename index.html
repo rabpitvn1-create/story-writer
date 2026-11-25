@@ -17,6 +17,8 @@
   <script src="codex.js" defer></script>
   <script src="memory.js" defer></script>
   <script src="chapter.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js" defer></script>
+  <script src="endless.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -50,6 +52,9 @@
         <button id="write-next-btn" type="button" class="primary-btn">Viết chương tiếp</button>
         <button id="next-chapter-btn" type="button" class="step-btn">Sau ›</button>
       </div>
+      <button id="endless-start-btn" type="button" class="secondary-btn">
+        Viết liên tục đến khi tôi bảo dừng
+      </button>
       <div id="stop-controls" class="writer-actions hidden">
         <button id="graceful-stop-btn" type="button" class="secondary-btn">Dừng nhẹ (hết chương)</button>
         <button id="hard-stop-btn" type="button" class="danger-btn">Dừng khẩn</button>
@@ -115,6 +120,11 @@
         <button id="open-import-codex-btn" type="button" class="primary-btn">
           Nhập codex / wiki nhân vật
         </button>
+      </div>
+
+      <div class="setting-group setting-divider" style="display:flex;flex-direction:column;gap:8px;">
+        <button id="export-all-btn" type="button" class="secondary-btn">Xuất truyện (.md + .docx)</button>
+        <button id="export-current-btn" type="button" class="step-btn">Xuất chương hiện tại (.md)</button>
       </div>
     </div>
   </div>

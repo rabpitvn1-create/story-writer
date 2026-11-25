@@ -718,6 +718,7 @@ function setupEvents(settings) {
 
   writeBtn.addEventListener('click', async () => {
     writeBtn.disabled = true;
+    document.getElementById('endless-start-btn').disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
 
@@ -736,16 +737,19 @@ function setupEvents(settings) {
     });
 
     writeBtn.disabled = false;
+    document.getElementById('endless-start-btn').disabled = false;
     stopControls.classList.add('hidden');
   });
 
   document.getElementById('graceful-stop-btn').addEventListener('click', () => {
-    window.ChapterEngine.requestGracefulStop();
+    if (window.EndlessManager) window.EndlessManager.stopEndlessGraceful();
+    else window.ChapterEngine.requestGracefulStop();
     statusEl.textContent = 'Sẽ dừng sau khi viết xong chương hiện tại và cập nhật bộ nhớ...';
   });
 
   document.getElementById('hard-stop-btn').addEventListener('click', () => {
-    window.ChapterEngine.hardStop();
+    if (window.EndlessManager) window.EndlessManager.stopEndlessHard();
+    else window.ChapterEngine.hardStop();
   });
 
   document.getElementById('prev-chapter-btn').addEventListener('click', () => {
@@ -754,6 +758,41 @@ function setupEvents(settings) {
 
   document.getElementById('next-chapter-btn').addEventListener('click', () => {
     openChapterByNumber(currentChapterNumber + 1);
+  });
+
+  // Phần 5: Chế độ Vô tận + Xuất file
+  const endlessBtn = document.getElementById('endless-start-btn');
+
+  endlessBtn.addEventListener('click', async () => {
+    writeBtn.disabled = true;
+    endlessBtn.disabled = true;
+    stopControls.classList.remove('hidden');
+    statusEl.classList.remove('hidden');
+
+    await window.EndlessManager.startEndlessMode({
+      onStatus: (msg) => {
+        statusEl.textContent = msg;
+      },
+      onChapterReady: async (chapterRecord) => {
+        const chars = await window.StoryDB.db.characters.toArray();
+        codex = Object.fromEntries(chars.map((c) => [c.name, c]));
+        renderCharDrawer();
+        currentChapterNumber = chapterRecord.number;
+        renderChapter(chapterRecord);
+      },
+      onFinished: () => {
+        writeBtn.disabled = false;
+        endlessBtn.disabled = false;
+        stopControls.classList.add('hidden');
+      }
+    });
+  });
+
+  document.getElementById('export-all-btn').addEventListener('click', () => {
+    window.EndlessManager.exportAllStory();
+  });
+  document.getElementById('export-current-btn').addEventListener('click', () => {
+    window.EndlessManager.exportCurrentChapterMd(currentChapterNumber);
   });
 }
 

@@ -27,23 +27,32 @@ function trimToWordLimit(text, maxWords = 2250) {
   return lastPeriod > sliced.length * 0.7 ? sliced.slice(0, lastPeriod + 1) : sliced;
 }
 
-async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal) {
+async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null) {
   const l4Text = l4Hits.map((h) => `[Chương ${h.chapterNumber}]: ${h.snippet}`).join('\n');
-  const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng 5.000–6.000 từ tiếng Việt, mỗi cảnh ~1.800–2.000 từ) và tự kiểm tra không vi phạm L1/L2.
-Trả về JSON thuần theo mẫu:
+  const recentMotifsText = creativity?.recentMotifs?.length
+    ? creativity.recentMotifs.map((m) => `${m.conflict}/${m.environment}`).join(', ')
+    : 'Chưa có';
+
+  const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng 5.000–6.000 từ tiếng Việt) và tự kiểm tra L1/L2.
+HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${creativity?.branchLabel || ''})
+TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
+${creativity?.tensionNote ? `NHỊP CĂNG THẲNG: ${creativity.tensionNote}` : ''}
+${auditFixNote ? `SỬA LỖI VI PHẠM CANON TRƯỚC ĐÓ: ${auditFixNote}` : ''}
+
+Trả về JSON thuần:
 {
   "title": "Tên chương ngắn",
-  "canonCheck": "Xác nhận không dùng vật phẩm đã mất / nhân vật đã chết",
+  "branch": "${creativity?.branch || 'twist'}",
+  "motif": { "conflict": "sinh tồn/tâm lý/giải đố/gặp gỡ", "environment": "mô tả ngắn bối cảnh" },
   "scenes": [
-    { "index": 1, "goal": "Mở đầu & khám phá", "beats": "Chi tiết hành động, không gian" },
-    { "index": 2, "goal": "Biến cố & cao trào", "beats": "Chi tiết xung đột" },
-    { "index": 3, "goal": "Dư âm & móc nối", "beats": "Chi tiết dư chấn, mở hook mới" }
+    { "index": 1, "goal": "Mở đầu & khám phá", "beats": "Chi tiết" },
+    { "index": 2, "goal": "Biến cố & cao trào", "beats": "Chi tiết" },
+    { "index": 3, "goal": "Dư âm & móc nối", "beats": "Chi tiết" }
   ]
 }
-
-TRẠNG THÁI L2: ${JSON.stringify(l2)}
-TÓM TẮT L3: ${l3.arcsText}\n${l3.recentText}
-TRA CỨU L4: ${l4Text || 'Không có'}`;
+L2: ${JSON.stringify(l2)}
+L3: ${l3.arcsText}\n${l3.recentText}
+L4: ${l4Text || 'Không có'}`;
 
   // Free-tier hay trả JSON bị cắt: thử lại 1 lần rồi mới báo lỗi thân thiện
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -57,16 +66,25 @@ TRA CỨU L4: ${l4Text || 'Không có'}`;
       signal
     });
 
+    let outline = null;
     try {
       const cleaned = raw.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
-      const outline = JSON.parse(cleaned);
+      outline = JSON.parse(cleaned);
       if (!outline || !Array.isArray(outline.scenes) || outline.scenes.length === 0) {
         throw new Error('Dàn ý thiếu danh sách cảnh.');
       }
-      return outline;
     } catch {
       if (attempt === 1) throw new Error('Dàn ý trả về không phải JSON hợp lệ, bấm Viết chương tiếp để thử lại.');
+      continue;
     }
+    // Kiểm tra liên tục trước khi viết (chỉ gọi lại tối đa 1 lần nếu vi phạm)
+    if (!auditFixNote && window.EndlessManager) {
+      const violations = window.EndlessManager.auditOutlineContinuity(outline, l2);
+      if (violations.length > 0) {
+        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity);
+      }
+    }
+    return outline;
   }
 }
 
@@ -131,7 +149,8 @@ async function digestChapter(chapterNumber, fullText, l2, signal) {
   "openHooks": ["Danh sách tối đa 5 lời hứa/bí ẩn đang mở"],
   "characterStates": {
     "Kai Akechi": { "level": "", "injuries": "", "inventory": "" }
-  }
+  },
+  "tension_level": 5
 }
 Sổ cái cũ: ${JSON.stringify(l2)}
 Nội dung chương:\n${excerpt}`;
@@ -180,13 +199,17 @@ Nội dung chương:\n${excerpt}`;
     });
   }
 
+  const nextTension = Math.min(10, Math.max(1, Number(data.tension_level) || 5));
+  const nextHistory = [...(l2.tensionHistory || []), nextTension].slice(-6);
+
   const nextLedger = {
     location: data.location || l2.location,
     deadCharacters: [...new Set([...(l2.deadCharacters || []), ...(data.newDeadCharacters || [])])],
     lostItems: [...new Set([...(l2.lostItems || []), ...(data.newLostItems || [])])],
     openHooks: Array.isArray(data.openHooks) ? data.openHooks : l2.openHooks,
     relationships: l2.relationships || {},
-    characterStates: { ...(l2.characterStates || {}), ...(data.characterStates || {}) }
+    characterStates: { ...(l2.characterStates || {}), ...(data.characterStates || {}) },
+    tensionHistory: nextHistory
   };
   await window.StoryMemory.saveL2Ledger(nextLedger);
 }
@@ -212,8 +235,11 @@ async function writeNextChapter({ onStatus, onChapterReady }) {
     let sceneTexts = draft?.sceneTexts || [];
 
     if (!outline) {
-      onStatus(`Chương ${chapterNumber}: Đang lập dàn ý & tự kiểm canon...`);
-      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal);
+      const creativity = window.EndlessManager
+        ? await window.EndlessManager.getCreativityConstraints(l2)
+        : null;
+      onStatus(`Chương ${chapterNumber}: Đang lập dàn ý (Hướng: ${creativity?.branchLabel || 'Tự do'})...`);
+      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, '', creativity);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
 
@@ -262,6 +288,9 @@ async function writeNextChapter({ onStatus, onChapterReady }) {
     await window.StoryDB.db.chapters.put(chapterRecord);
     onStatus(`Chương ${chapterNumber}: Đang tóm tắt & cập nhật bộ nhớ 4 tầng...`);
     await digestChapter(chapterNumber, fullText, l2, signal);
+    if (window.EndlessManager && outline?.motif) {
+      await window.EndlessManager.recordChapterMotif(outline.motif);
+    }
     await window.StoryDB.setSetting('chapter_draft', null);
 
     onStatus(`Hoàn thành Chương ${chapterNumber} (${chapterRecord.wordCount} từ).`);
