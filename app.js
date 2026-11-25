@@ -47,6 +47,60 @@ const DEFAULT_SETTINGS = {
   fontSize: 18
 };
 
+// Bảng Setup gu truyện (lưu vào IndexedDB, khóa 'storyPrefs')
+const DEFAULT_STORY_PREFS = {
+  genres: ['Kinh dị', 'Bí ẩn'],
+  customGenre: '',
+  drama: 'Trung bình',
+  sideCharDeathRate: 'Trung bình',
+  ending: 'Kết thúc mở',
+  autoFullscreen: false
+};
+
+let currentStoryPrefs = { ...DEFAULT_STORY_PREFS };
+
+function toggleFullscreen(forceOn = null) {
+  const isFull = Boolean(document.fullscreenElement);
+  const shouldEnter = forceOn !== null ? forceOn : !isFull;
+  if (shouldEnter && !isFull && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else if (!shouldEnter && isFull && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function populateSetupUI(prefs) {
+  const selected = new Set(prefs.genres || []);
+  document.querySelectorAll('#setup-genres input[type="checkbox"]').forEach((cb) => {
+    cb.checked = selected.has(cb.value);
+  });
+  document.getElementById('setup-custom-genre').value = prefs.customGenre || '';
+  document.getElementById('setup-fullscreen-toggle').checked = Boolean(prefs.autoFullscreen);
+
+  const map = { drama: prefs.drama, deathRate: prefs.sideCharDeathRate, ending: prefs.ending };
+  document.querySelectorAll('.seg-group').forEach((group) => {
+    const val = map[group.dataset.seg];
+    group.querySelectorAll('.seg-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.val === val);
+    });
+  });
+}
+
+function collectSetupUI() {
+  const genres = Array.from(document.querySelectorAll('#setup-genres input:checked')).map((el) => el.value);
+  const getSeg = (key, fallback) =>
+    document.querySelector(`.seg-group[data-seg="${key}"] .seg-btn.active`)?.dataset.val || fallback;
+
+  return {
+    genres,
+    customGenre: document.getElementById('setup-custom-genre').value.trim(),
+    drama: getSeg('drama', 'Trung bình'),
+    sideCharDeathRate: getSeg('deathRate', 'Trung bình'),
+    ending: getSeg('ending', 'Kết thúc mở'),
+    autoFullscreen: document.getElementById('setup-fullscreen-toggle').checked
+  };
+}
+
 let codex = loadCodex();
 let docxCodex = loadDocxCodex();
 
@@ -528,6 +582,7 @@ function setupEvents(settings) {
   const settingsModal = document.getElementById('settings-modal');
   const importModal = document.getElementById('import-codex-modal');
   const codexModal = document.getElementById('codex-modal');
+  const setupModal = document.getElementById('setup-modal');
 
   document.getElementById('settings-btn').addEventListener('click', () => {
     settingsModal.classList.remove('hidden');
@@ -539,13 +594,43 @@ function setupEvents(settings) {
     importModal.classList.remove('hidden');
   });
 
+  // Bảng Setup gu truyện
+  document.querySelectorAll('.seg-group').forEach((group) => {
+    group.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      group.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  document.getElementById('fullscreen-btn').addEventListener('click', () => toggleFullscreen());
+
+  document.getElementById('open-setup-btn').addEventListener('click', () => {
+    settingsModal.classList.add('hidden');
+    populateSetupUI(currentStoryPrefs);
+    setupModal.classList.remove('hidden');
+  });
+
+  document.getElementById('setup-continue-btn').addEventListener('click', async () => {
+    currentStoryPrefs = collectSetupUI();
+    // Bật fullscreen ngay trong cú chạm (giữ đúng gesture) trước khi lưu async
+    if (currentStoryPrefs.autoFullscreen) toggleFullscreen(true);
+    try {
+      await window.StoryDB.setSetting('storyPrefs', currentStoryPrefs);
+    } catch {
+      // IndexedDB chưa sẵn sàng: giữ lựa chọn trong bộ nhớ, không chặn đọc truyện
+    }
+    setupModal.classList.add('hidden');
+  });
+
   document.querySelectorAll('[data-close]').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.getElementById(btn.dataset.close).classList.add('hidden');
     });
   });
 
-  [settingsModal, importModal, codexModal].forEach((backdrop) => {
+  [settingsModal, importModal, codexModal, setupModal].forEach((backdrop) => {
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) backdrop.classList.add('hidden');
     });
@@ -939,4 +1024,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   setupEvents(settings);
   if (dbReady) await refreshSettingsUI();
+  if (dbReady) {
+    // Hiện bảng Setup ngay khi mở app, điền sẵn lựa chọn đã lưu (nếu có)
+    currentStoryPrefs = { ...DEFAULT_STORY_PREFS, ...((await window.StoryDB.getSetting('storyPrefs', {})) || {}) };
+    populateSetupUI(currentStoryPrefs);
+    document.getElementById('setup-modal').classList.remove('hidden');
+  }
 });

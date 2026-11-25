@@ -30,14 +30,24 @@
       </svg>
     </button>
     <h1 id="chapter-title" class="chapter-title">CHAPTER 1</h1>
-    <button id="chars-btn" class="icon-btn" aria-label="Nhân vật" title="Danh sách nhân vật">
-      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-        <circle cx="9" cy="7" r="4"></circle>
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-      </svg>
-    </button>
+    <div class="topbar-right">
+      <button id="fullscreen-btn" class="icon-btn" aria-label="Toàn màn hình" title="Bật/tắt toàn màn hình">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <polyline points="9 21 3 21 3 15"></polyline>
+          <line x1="21" y1="3" x2="14" y2="10"></line>
+          <line x1="3" y1="21" x2="10" y2="14"></line>
+        </svg>
+      </button>
+      <button id="chars-btn" class="icon-btn" aria-label="Nhân vật" title="Danh sách nhân vật">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <div id="cooldown-banner" class="cooldown-banner hidden"></div>
@@ -145,6 +155,9 @@
       </div>
 
       <div class="setting-group setting-divider">
+        <button id="open-setup-btn" type="button" class="secondary-btn" style="margin-bottom:8px;">
+          Thiết lập thể loại &amp; gu truyện
+        </button>
         <button id="open-import-codex-btn" type="button" class="primary-btn">
           Nhập codex / wiki nhân vật
         </button>
@@ -242,6 +255,71 @@
       </button>
       <div id="char-drawer-list" class="char-drawer-list"></div>
     </aside>
+  </div>
+
+  <!-- Bảng Setup gu truyện hiện khi mở app -->
+  <div id="setup-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="setup-heading">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="setup-heading">Thiết lập truyện</h2>
+        <button class="close-btn" data-close="setup-modal" aria-label="Đóng">&times;</button>
+      </div>
+
+      <div class="setting-group">
+        <label>Thể loại (chọn nhiều)</label>
+        <div id="setup-genres" class="chip-grid">
+          <label class="chip-item"><input type="checkbox" value="Hài đen" /><span>Hài đen</span></label>
+          <label class="chip-item"><input type="checkbox" value="Gore" /><span>Gore</span></label>
+          <label class="chip-item"><input type="checkbox" value="Phiêu lưu" /><span>Phiêu lưu</span></label>
+          <label class="chip-item"><input type="checkbox" value="Kinh dị" /><span>Kinh dị</span></label>
+          <label class="chip-item"><input type="checkbox" value="Bí ẩn" /><span>Bí ẩn</span></label>
+          <label class="chip-item"><input type="checkbox" value="Giả tưởng" /><span>Giả tưởng</span></label>
+          <label class="chip-item"><input type="checkbox" value="Khoa học viễn tưởng" /><span>Khoa học viễn tưởng</span></label>
+          <label class="chip-item"><input type="checkbox" value="Lãng mạn" /><span>Lãng mạn</span></label>
+          <label class="chip-item"><input type="checkbox" value="Giật gân" /><span>Giật gân</span></label>
+          <label class="chip-item"><input type="checkbox" value="Tâm lý" /><span>Tâm lý</span></label>
+          <label class="chip-item"><input type="checkbox" value="Hành động" /><span>Hành động</span></label>
+          <label class="chip-item"><input type="checkbox" value="Siêu nhiên" /><span>Siêu nhiên</span></label>
+        </div>
+        <input id="setup-custom-genre" type="text" class="setup-input" placeholder="Thể loại khác (tùy chọn)..." />
+      </div>
+
+      <div class="setting-group">
+        <label>Kịch tính</label>
+        <div class="seg-group" data-seg="drama">
+          <button type="button" class="seg-btn" data-val="Cao">Cao</button>
+          <button type="button" class="seg-btn" data-val="Trung bình">Trung bình</button>
+          <button type="button" class="seg-btn" data-val="Thấp">Thấp</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>Tỉ lệ nhân vật phụ chết</label>
+        <div class="seg-group" data-seg="deathRate">
+          <button type="button" class="seg-btn" data-val="Cao">Cao</button>
+          <button type="button" class="seg-btn" data-val="Trung bình">Trung bình</button>
+          <button type="button" class="seg-btn" data-val="Thấp">Thấp</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>Kết thúc truyện</label>
+        <div class="seg-group" data-seg="ending">
+          <button type="button" class="seg-btn" data-val="Happy Ending">Happy Ending</button>
+          <button type="button" class="seg-btn" data-val="Sad Ending">Sad Ending</button>
+          <button type="button" class="seg-btn" data-val="Kết thúc mở">Kết thúc mở</button>
+        </div>
+      </div>
+
+      <label class="toggle-row" style="margin-bottom:14px;">
+        <input id="setup-fullscreen-toggle" type="checkbox" />
+        <span>Mở toàn màn hình khi tiếp tục</span>
+      </label>
+
+      <button id="setup-continue-btn" type="button" class="primary-btn">
+        Lưu &amp; Tiếp tục đọc truyện
+      </button>
+    </div>
   </div>
 </body>
 </html>

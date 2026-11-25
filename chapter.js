@@ -27,7 +27,16 @@ function trimToWordLimit(text, maxWords = 2250) {
   return lastPeriod > sliced.length * 0.7 ? sliced.slice(0, lastPeriod + 1) : sliced;
 }
 
-async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '') {
+async function getStoryPrefsDirective() {
+  const prefs = await window.StoryDB.getSetting('storyPrefs', null);
+  if (!prefs) return '';
+  const allGenres = Array.isArray(prefs.genres) ? [...prefs.genres] : [];
+  if (prefs.customGenre) allGenres.push(prefs.customGenre);
+  const genreStr = allGenres.length ? allGenres.join(', ') : 'Tự do';
+  return `GU TRUYỆN: Thể loại [${genreStr}]; Kịch tính: ${prefs.drama || 'Trung bình'}; Tỉ lệ nhân vật phụ chết: ${prefs.sideCharDeathRate || 'Trung bình'}; Định hướng kết thúc: ${prefs.ending || 'Kết thúc mở'} (lái dần các biến cố và móc nối về hướng này).`;
+}
+
+async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '') {
   const l4Text = l4Hits.map((h) => `[Chương ${h.chapterNumber}]: ${h.snippet}`).join('\n');
   const recentMotifsText = creativity?.recentMotifs?.length
     ? creativity.recentMotifs.map((m) => `${m.conflict}/${m.environment}`).join(', ')
@@ -38,6 +47,7 @@ HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${cre
 TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
 ${creativity?.tensionNote ? `NHỊP CĂNG THẲNG: ${creativity.tensionNote}` : ''}
 ${userDirection ? `GỢI Ý CỦA NGƯỜI VIẾT (ưu tiên cao nhất, dàn ý phải bám sát gợi ý này): ${userDirection}` : ''}
+${prefsDirective ? `${prefsDirective}\n` : ''}
 ${auditFixNote ? `SỬA LỖI VI PHẠM CANON TRƯỚC ĐÓ: ${auditFixNote}` : ''}
 
 Trả về JSON thuần:
@@ -82,20 +92,20 @@ L4: ${l4Text || 'Không có'}`;
     if (!auditFixNote && window.EndlessManager) {
       const violations = window.EndlessManager.auditOutlineContinuity(outline, l2);
       if (violations.length > 0) {
-        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection);
+        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective);
       }
     }
     return outline;
   }
 }
 
-async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress }) {
+async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, prefsDirective = '' }) {
   const systemPrompt = `${l1}\n\n${window.StoryMemory.VOICE_HANDBOOK}\n\n${window.StoryMemory.VOICE_ANCHORS}`;
   const isLast = scene.index === totalScenes;
 
   const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 1.800–2.000 từ tiếng Việt).
 Mục tiêu cảnh: ${scene.goal}
-Chi tiết: ${scene.beats}
+${prefsDirective ? `${prefsDirective}\n` : ''}Chi tiết: ${scene.beats}
 Trạng thái hiện tại (L2): ${JSON.stringify(l2)}
 Tóm tắt gần nhất (L3): ${l3.recentText || 'Chương mở đầu'}
 ${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
@@ -231,6 +241,7 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
     const l2 = await window.StoryMemory.getL2Ledger();
     const l3 = await window.StoryMemory.getL3Summaries();
     const l4Hits = await window.StoryMemory.searchL4Chapters((l2.openHooks || []).join(' '), 2);
+    const prefsDirective = await getStoryPrefsDirective();
 
     let outline = draft?.outline;
     let sceneTexts = draft?.sceneTexts || [];
@@ -245,7 +256,7 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
         ? await window.EndlessManager.getCreativityConstraints(l2)
         : null;
       onStatus(`Chương ${chapterNumber}: Đang lập dàn ý (Hướng: ${creativity?.branchLabel || 'Tự do'})...`);
-      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, '', creativity, userDirection);
+      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
 
@@ -266,6 +277,7 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
         rollingTail,
         linterNotes,
         signal,
+        prefsDirective,
         onProgress: (w) => onStatus(`Chương ${chapterNumber}: Cảnh ${i + 1}/3 (${w} từ)...`)
       });
 

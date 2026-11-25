@@ -27,7 +27,7 @@ body {
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: 44px 1fr 44px;
+  grid-template-columns: 84px 1fr 84px;
   align-items: center;
   height: 54px;
   padding: 0 14px;
@@ -692,4 +692,77 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* Bảng Setup gu truyện */
+.topbar-right {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.chip-item {
+  margin: 0 !important;
+  cursor: pointer;
+}
+
+.chip-item input {
+  display: none;
+}
+
+.chip-item span {
+  display: inline-block;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.chip-item input:checked + span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.setup-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.seg-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.seg-btn {
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.seg-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
 }
