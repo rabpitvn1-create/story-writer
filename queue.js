@@ -91,8 +91,8 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
       keyObj.provider === 'claude'
         ? apiConfig.claudeModel || 'claude-sonnet-5-5'
         : lane === 'writer'
-          ? apiConfig.geminiWriterModel || 'gemini-2.5-flash'
-          : apiConfig.geminiUtilityModel || 'gemini-2.5-flash-lite';
+          ? apiConfig.geminiWriterModel || 'gemini-3.6-flash'
+          : apiConfig.geminiUtilityModel || 'gemini-3.5-flash-lite';
 
     try {
       const result = await window.UnifiedAdapter.callLLM({

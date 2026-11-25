@@ -56,21 +56,20 @@ async function recordKeySuccess(keyId) {
   });
 }
 
-// Chọn key bám dính theo Làn:
-// - lane = 'writer': ưu tiên Claude (nếu không bật freeOnlyMode), hết thì rớt xuống pool Gemini
-// - lane = 'utility': luôn dùng pool Gemini
+// Thứ tự ưu tiên cho CẢ HAI LÀN ('writer' và 'utility'):
+// - Free trước: thử pool Gemini miễn phí trước, chỉ dùng Claude khi tất cả key Gemini cạn/cooldown
+// - Nếu bật freeOnlyMode: chỉ dùng ['gemini'], hết Gemini thì dừng đợi
+// - Tự quay lại Gemini ngay khi có bất kỳ key Gemini nào hết cooldown 24h
 async function selectKey(lane, freeOnlyMode) {
   const pool = await refreshExpiredCooldowns();
   const activeKeyId = await window.StoryDB.getSetting(`sticky_${lane}`, null);
 
-  const allowedProviders =
-    lane === 'writer' && !freeOnlyMode ? ['claude', 'gemini'] : ['gemini'];
+  const allowedProviders = freeOnlyMode ? ['gemini'] : ['gemini', 'claude'];
 
   for (const provider of allowedProviders) {
     const readyList = pool.filter((k) => k.provider === provider && k.status === 'ready');
     if (readyList.length === 0) continue;
 
-    // Giữ nguyên key đang dùng (sticky) nếu còn sẵn sàng
     const sticky = readyList.find((k) => k.id === activeKeyId);
     const chosen = sticky || readyList[0];
     await window.StoryDB.setSetting(`sticky_${lane}`, chosen.id);
@@ -82,8 +81,7 @@ async function selectKey(lane, freeOnlyMode) {
 
 async function getEarliestReadyTime(lane, freeOnlyMode) {
   const pool = await getPool();
-  const allowedProviders =
-    lane === 'writer' && !freeOnlyMode ? ['claude', 'gemini'] : ['gemini'];
+  const allowedProviders = freeOnlyMode ? ['gemini'] : ['gemini', 'claude'];
   const candidates = pool.filter(
     (k) => allowedProviders.includes(k.provider) && k.status === 'cooldown' && k.cooldownUntil
   );

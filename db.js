@@ -25,9 +25,27 @@ async function setSetting(key, value) {
   await db.settings.put({ key, value });
 }
 
+async function upgradeDeprecatedGeminiModels() {
+  const cfg = await getSetting('apiConfig', null);
+  if (!cfg) return;
+  let changed = false;
+  if (cfg.geminiWriterModel === 'gemini-2.5-flash' || cfg.geminiWriterModel === 'gemini-3.8-flash') {
+    cfg.geminiWriterModel = 'gemini-3.6-flash';
+    changed = true;
+  }
+  if (cfg.geminiUtilityModel === 'gemini-2.5-flash-lite') {
+    cfg.geminiUtilityModel = 'gemini-3.5-flash-lite';
+    changed = true;
+  }
+  if (changed) await setSetting('apiConfig', cfg);
+}
+
 async function initDatabase(defaultCodex, defaultSettings) {
   const migrated = await getSetting('migrated_v1', false);
-  if (migrated) return;
+  if (migrated) {
+    await upgradeDeprecatedGeminiModels();
+    return;
+  }
 
   // 1. Migrate settings đọc sách
   try {
@@ -63,20 +81,20 @@ async function initDatabase(defaultCodex, defaultSettings) {
         type: 'raw_docx',
         title: doc.fileName || 'codex.docx',
         content: doc.text || '',
-        updatedAt: doc.updatedAt || Date.now()
+        updatedAt: doc.updatedAt || new Date().getTime()
       });
     }
   } catch {
     // Bỏ qua nếu không có dữ liệu cũ
   }
 
-  // Khởi tạo cấu hình API & Budget mặc định
+  // Khởi tạo cấu hình API & Budget mặc định với gemini-3.6-flash và gemini-3.5-flash-lite
   await setSetting('apiConfig', {
     freeOnlyMode: false,
     dailyCap: 100,
     claudeModel: 'claude-sonnet-5-5',
-    geminiWriterModel: 'gemini-2.5-flash',
-    geminiUtilityModel: 'gemini-2.5-flash-lite'
+    geminiWriterModel: 'gemini-3.6-flash',
+    geminiUtilityModel: 'gemini-3.5-flash-lite'
   });
 
   await setSetting('migrated_v1', true);
