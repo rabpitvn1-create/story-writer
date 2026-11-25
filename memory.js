@@ -1,14 +1,34 @@
-const VOICE_HANDBOOK = `SỔ TAY GIỌNG VĂN (BẮT BUỘC):
-- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn Kai Akechi (gọi là "Kai" hoặc "cậu", tuyệt đối không đổi sang "tôi" hay "hắn" ngoài lời thoại).
-- Nhịp câu: Câu ngắn, gãy gọn khi căng thẳng hoặc quan sát; câu vừa phải khi độc thoại nội tâm. Tránh câu ghép dài kiểu văn dịch.
-- Tả thực (Show, Don't Tell): Không viết "Kai thấy sợ", hãy tả phản xạ cơ thể (mồ hôi lạnh, nhịp thở khựng lại, ngón tay siết chặt).
-- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).`;
+function buildVoiceHandbook(mainChar = null) {
+  const name = mainChar?.name ? mainChar.name : 'nhân vật chính';
+  const speechLine = mainChar?.speech_style
+    ? `- Khẩu khí ${name}: ${mainChar.speech_style}`
+    : '- Giọng thoại phân biệt rõ từng nhân vật theo cá tính riêng.';
+  const misbeliefLine = mainChar?.misbelief
+    ? `- Điểm mù nội tâm (${name}): ${mainChar.misbelief}`
+    : '';
 
-const VOICE_ANCHORS = `MẪU GIỌNG VĂN NEO:
-1. [Không gian] Tiếng đèn huỳnh quang rít đều trên trần, nhức nhối như một con côn trùng mắc kẹt sau lớp thạch cao. Thảm dưới chân Kai ẩm nước, không lạnh buốt mà âm ấm một cách khó chịu.
-2. [Nội tâm] Kai không chạy. Chạy trong một hành lang không có điểm kết chỉ đốt sạch oxy và làm mờ khả năng phán đoán. Cậu đếm chậm bốn nhịp thở, mắt bám chặt vào vết nứt nhỏ trên chân tường.
-3. [Thoại] Kai Akechi: Đừng nhìn lại phía sau.
-Alxece: Nó vẫn đang đi theo nhịp chân của chúng ta.`;
+  return [
+    'SỔ TAY GIỌNG VĂN (BẮT BUỘC):',
+    `- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn ${name} (gọi tên hoặc đại từ nhất quán, tuyệt đối không đổi sang "tôi" hay "hắn" ngoài lời thoại).`,
+    '- Nhịp câu: Câu ngắn, gãy gọn khi căng thẳng hoặc quan sát; câu vừa phải khi độc thoại nội tâm. Tránh câu ghép dài kiểu văn dịch.',
+    '- Tả thực (Show, Don\'t Tell): Không gọi tên cảm xúc trực tiếp, hãy tả phản xạ cơ thể và chi tiết vật lý.',
+    speechLine,
+    misbeliefLine,
+    '- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).'
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildVoiceAnchors(mainChar = null) {
+  const name = mainChar?.name ? mainChar.name : 'Cậu';
+  return `MẪU GIỌNG VĂN NEO:
+1. [Không gian] Mưa gõ nhẹ lên mái tôn, mùi đất ẩm len qua khe cửa. ${name} đứng yên một lúc, nghe tiếng mưa rồi mới bước tiếp.
+2. [Nội tâm] ${name} không vội vàng. Vội vàng chỉ đốt sạch hơi thở và làm mờ phán đoán. Nhịp tim dội chậm bên thái dương, mắt bám chặt vào vệt nước loang trên nền gạch.`;
+}
+
+const VOICE_HANDBOOK = buildVoiceHandbook(null);
+const VOICE_ANCHORS = buildVoiceAnchors(null);
 
 const BANNED_SLOP = [
   'cảm giác ớn lạnh chạy dọc sống lưng',
@@ -112,7 +132,9 @@ function buildCharCoreCard(char, maxChars = 600) {
   const priorityParts = [
     char.aliases ? `Danh hiệu: ${truncateText(char.aliases, 100)}` : '',
     char.hard_constraints ? `Ràng buộc: ${truncateText(char.hard_constraints, 160)}` : '',
-    char.speech_style ? `Giọng điệu: ${truncateText(char.speech_style, 140)}` : ''
+    char.speech_style ? `Giọng điệu: ${truncateText(char.speech_style, 140)}` : '',
+    char.misbelief ? `Điểm mù: ${truncateText(char.misbelief, 110)}` : '',
+        char.thirdRail ? `Vết thương/cấm kỵ: ${truncateText(char.thirdRail, 100)}` : '',
   ].filter(Boolean);
 
   let card = priorityParts.length ? `${header} | ${priorityParts.join(' | ')}` : header;
@@ -197,7 +219,7 @@ function lintScene(text) {
     .join(' ');
   const strippedQuotes = nonDialogueLines.replace(/["“”][^"“”]*["“”]/g, '');
   if (/\b(tôi|mình)\b/i.test(strippedQuotes)) {
-    warnings.push('Phát hiện đại từ ngôi thứ nhất ("tôi/mình") trong đoạn trần thuật; giữ chặt ngôi thứ ba ("Kai/cậu").');
+    warnings.push('Phát hiện đại từ ngôi thứ nhất ("tôi/mình") trong đoạn trần thuật; giữ chặt ngôi thứ ba (gọi tên nhân vật chính).');
   }
 
   // Kiểm tra độ dài câu trung bình
@@ -223,10 +245,10 @@ async function getL1HardCanon(queryContext = '', includeDynamic = true) {
   // Ưu tiên nhân vật được nhắc tới trong queryContext, giới hạn tối đa 4 nhân vật cho L1-Core
   const qLower = String(queryContext || '').toLowerCase();
   const orderedChars = [...chars].sort((a, b) => {
-    const aHit = qLower && a.name && qLower.includes(a.name.toLowerCase()) ? 1 : 0;
-    const bHit = qLower && b.name && qLower.includes(b.name.toLowerCase()) ? 1 : 0;
-    return bHit - aHit;
-  });
+      const aScore = (a.isMain === true ? 2 : 0) + (qLower && a.name && qLower.includes(a.name.toLowerCase()) ? 3 : 0);
+      const bScore = (b.isMain === true ? 2 : 0) + (qLower && b.name && qLower.includes(b.name.toLowerCase()) ? 3 : 0);
+      return bScore - aScore;
+    });
 
   const coreCharText = orderedChars
     .slice(0, 4)
@@ -328,6 +350,62 @@ async function searchL4Chapters(query, limit = 2) {
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
+async function harvestFromDigest(newChars = [], newRules = []) {
+  let addedChars = 0;
+  let addedRules = 0;
+
+  if (Array.isArray(newChars) && newChars.length > 0) {
+    const existing = await window.StoryDB.db.characters.toArray();
+    const knownNames = new Set();
+    existing.forEach((c) => {
+      if (c.name) knownNames.add(c.name.toLowerCase().trim());
+      String(c.aliases || '')
+        .split(/[,;]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean)
+        .forEach((a) => knownNames.add(a));
+    });
+
+    for (const nc of newChars) {
+      if (!nc || !nc.name) continue;
+      const cleanName = window.CodexParser ? window.CodexParser.capitalizeName(nc.name) : nc.name.trim();
+      if (!cleanName || knownNames.has(cleanName.toLowerCase())) continue;
+
+      const base = window.CodexParser ? window.CodexParser.emptyChar(cleanName) : { name: cleanName };
+      const record = {
+        ...base,
+        name: cleanName,
+        appearance: [nc.gender, nc.age ? `${nc.age} tuổi` : '', nc.appearance].filter(Boolean).join(', '),
+        personality: nc.personality || '',
+        description: nc.personality || nc.appearance || '',
+        speech_style: nc.speech_style || '',
+        misbelief: nc.misbelief || '',
+        thirdRail: nc.thirdRail || '',
+        isMain: nc.isMain === true ? true : null,
+        updatedAt: Date.now()
+      };
+      await window.StoryDB.db.characters.put(record);
+      knownNames.add(cleanName.toLowerCase());
+      addedChars++;
+    }
+  }
+
+  if (Array.isArray(newRules) && newRules.length > 0) {
+    const existingRules = await window.StoryDB.db.worldRules.where('type').anyOf('hard_rule', 'soft_lore').toArray();
+    const knownRules = new Set(existingRules.map((r) => String(r.content || '').toLowerCase().trim()));
+
+    for (const rule of newRules) {
+      const clean = String(rule || '').trim();
+      if (clean.length < 8 || knownRules.has(clean.toLowerCase())) continue;
+      await window.StoryDB.db.worldRules.add({ type: 'soft_lore', content: clean, updatedAt: Date.now() });
+      knownRules.add(clean.toLowerCase());
+      addedRules++;
+    }
+  }
+
+  return { addedChars, addedRules };
+}
+
 window.StoryMemory = {
   VOICE_HANDBOOK,
   VOICE_ANCHORS,
@@ -340,5 +418,8 @@ window.StoryMemory = {
   getL2Ledger,
   saveL2Ledger,
   getL3Summaries,
-  searchL4Chapters
+  searchL4Chapters,
+  buildVoiceHandbook,
+  buildVoiceAnchors,
+  harvestFromDigest
 };

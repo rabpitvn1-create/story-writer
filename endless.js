@@ -73,7 +73,7 @@ async function recordChapterMotif(motif) {
 
 // Kiểm tra liên tục trước khi viết (Pre-write Continuity Audit)
 // Chỉ quét các trường có nghĩa (tiêu đề + mục tiêu/chi tiết từng cảnh) và khớp đúng tên đầy đủ —
-// "Kai" đã chết không được báo nhầm khi dàn ý nhắc "Kai Akechi" còn sống.
+// Tên ngắn đã chết không được báo nhầm khi dàn ý nhắc tên dài còn sống.
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -89,7 +89,7 @@ function auditOutlineContinuity(outline, l2) {
     const n = String(name || '').trim();
     if (!n || n.length < 3) return false;
     // Khớp đúng tên đầy đủ: không nằm trong từ dài hơn. Nếu sau tên là khoảng trắng + chữ HOA
-    // thì đây là phần đầu của tên dài hơn ("Kai" trong "Kai Akechi" không tính) -> thử lần khớp sau.
+    // thì đây là phần đầu của tên dài hơn ("An" trong "An Bình" không tính) -> thử lần khớp sau.
     const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(n)}(?![\\p{L}\\p{N}_])`, 'giu');
     let m;
     while ((m = re.exec(fields)) !== null) {

@@ -36,12 +36,17 @@ async function getStoryPrefsDirective() {
   return `GU TRUYỆN: Thể loại [${genreStr}]; Kịch tính: ${prefs.drama || 'Trung bình'}; Tỉ lệ nhân vật phụ chết: ${prefs.sideCharDeathRate || 'Trung bình'}; Định hướng kết thúc: ${prefs.ending || 'Kết thúc mở'} (lái dần các biến cố và móc nối về hướng này).`;
 }
 
-async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '', onUsage = null) {
+async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '', onUsage = null, isSeedMode = false) {
   const l4Text = l4Hits.map((h) => `[Chương ${h.chapterNumber}]: ${h.snippet}`).join('\n');
   const recentMotifsText = creativity?.recentMotifs?.length
     ? creativity.recentMotifs.map((m) => `${m.conflict}/${m.environment}`).join(', ')
     : 'Chưa có';
 
+  const seedBlock = isSeedMode
+    ? `\nCHẾ ĐỘ KHỞI TẠO (CODEX TRỐNG): Tự sáng tác 2–3 nhân vật (nhân vật đầu tiên là nhân vật chính POV) và 2–3 luật thế giới nền khớp thể loại & bối cảnh. Trả thêm 2 mảng trong JSON:
+  "seededCharacters": [{ "name": "", "age": "", "gender": "", "appearance": "", "personality": "", "misbelief": "niềm tin sai lầm cốt lõi", "thirdRail": "chủ đề cấm kỵ/dễ nổ", "speech_style": "1 dòng giọng nói riêng biệt" }],
+  "seededRules": ["luật thế giới nền ngắn gọn"]\n`
+    : '';
   const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng 5.000–6.000 từ tiếng Việt) và tự kiểm tra L1/L2.
 HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${creativity?.branchLabel || ''})
 TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
@@ -49,7 +54,7 @@ ${creativity?.tensionNote ? `NHỊP CĂNG THẲNG: ${creativity.tensionNote}` : 
 ${userDirection ? `GỢI Ý CỦA NGƯỜI VIẾT (ưu tiên cao nhất, dàn ý phải bám sát gợi ý này): ${userDirection}` : ''}
 ${prefsDirective ? `${prefsDirective}\n` : ''}
 ${auditFixNote ? `SỬA LỖI VI PHẠM CANON TRƯỚC ĐÓ: ${auditFixNote}` : ''}
-
+${seedBlock}
 Trả về JSON thuần:
 {
   "title": "Tên chương ngắn",
@@ -93,15 +98,15 @@ L4: ${l4Text || 'Không có'}`;
     if (!auditFixNote && window.EndlessManager) {
       const violations = window.EndlessManager.auditOutlineContinuity(outline, l2);
       if (violations.length > 0) {
-        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective, onUsage);
+        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective, onUsage, isSeedMode);
       }
     }
     return outline;
   }
 }
 
-async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '', onUsage = null }) {
-  const systemPrompt = `${l1}\n\n${window.StoryMemory.VOICE_HANDBOOK}\n\n${window.StoryMemory.VOICE_ANCHORS}`;
+async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '', onUsage = null, mainChar = null }) {
+  const systemPrompt = `${l1}\n\n${window.StoryMemory.buildVoiceHandbook(mainChar)}\n\n${window.StoryMemory.buildVoiceAnchors(mainChar)}`;
   const isLast = scene.index === totalScenes;
 
   const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 1.800–2.000 từ tiếng Việt).
@@ -170,8 +175,10 @@ async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null
   "newDeadCharacters": [],
   "newLostItems": [],
   "openHooks": ["Danh sách tối đa 5 lời hứa/bí ẩn đang mở"],
+  "newCharacters": [],
+  "newWorldRules": [],
   "characterStates": {
-    "Kai Akechi": { "level": "", "injuries": "", "inventory": "" }
+    "${Object.keys(l2.characterStates || {})[0] || 'Nhân vật chính'}": { "level": "", "injuries": "", "inventory": "" }
   },
   "tension_level": 5
 }
@@ -184,7 +191,7 @@ Nội dung chương:\n${excerpt}`;
       lane: 'utility',
       systemPrompt: 'Trả về JSON thuần, ngắn gọn, chính xác.',
       messages: [{ role: 'user', content: prompt }],
-      maxTokens: 1500,
+      maxTokens: 1800,
       temperature: 0.2,
       stream: false,
       signal,
@@ -236,6 +243,7 @@ Nội dung chương:\n${excerpt}`;
     tensionHistory: nextHistory
   };
   await window.StoryMemory.saveL2Ledger(nextLedger);
+  await window.StoryMemory.harvestFromDigest(data.newCharacters || [], data.newWorldRules || []);
 }
 
 async function writeNextChapter({
@@ -284,6 +292,8 @@ async function writeNextChapter({
     const prefsDirective = await getStoryPrefsDirective();
     const outlineQuery = [userDirection, l2.location, ...(l2.openHooks || [])].filter(Boolean).join(' ');
     const l4Hits = await window.StoryMemory.searchL4Chapters(outlineQuery, 2);
+    const existingChars = await window.StoryDB.db.characters.toArray();
+    const isSeedMode = existingChars.length === 0;
 
     outline = draft?.outline;
     let sceneTexts = Array.isArray(draft?.sceneTexts) ? [...draft.sceneTexts] : [];
@@ -302,13 +312,39 @@ async function writeNextChapter({
         : null;
       onStatus(`Chương ${chapterNumber}: Đang lập dàn ý (Hướng: ${creativity?.branchLabel || 'Tự do'})...`);
       const outlineL1 = await window.StoryMemory.getL1HardCanon(outlineQuery, true);
-      outline = await generateOutline(chapterNumber, outlineL1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective, trackUsage);
+      outline = await generateOutline(chapterNumber, outlineL1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective, trackUsage, isSeedMode);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
 
     if (onOutlineReady && outline?.title) {
       onOutlineReady(chapterNumber, outline.title);
     }
+
+    // Seed Mode: codex trống thì lưu nhân vật/luật do outline bịa ra TRƯỚC cảnh 1
+    if (isSeedMode && outline) {
+      if (Array.isArray(outline.seededCharacters) && outline.seededCharacters.length > 0) {
+        const seeded = outline.seededCharacters.map((c, idx) => ({
+          ...c,
+          isMain: idx === 0 ? true : null
+        }));
+        await window.StoryMemory.harvestFromDigest(seeded, []);
+      }
+      if (Array.isArray(outline.seededRules) && outline.seededRules.length > 0) {
+        const existingRules = await window.StoryDB.db.worldRules.where('type').equals('hard_rule').toArray();
+        const knownRules = new Set(existingRules.map((r) => String(r.content || '').toLowerCase().trim()));
+        for (const r of outline.seededRules) {
+          const clean = String(r || '').trim();
+          if (!clean || knownRules.has(clean.toLowerCase())) continue;
+          await window.StoryDB.db.worldRules.add({ type: 'hard_rule', content: clean, updatedAt: Date.now() });
+          knownRules.add(clean.toLowerCase());
+        }
+      }
+    }
+
+    // Nhân vật chính hiện tại cho giọng văn động (sau khi Seed đã lưu)
+    const currentChars = await window.StoryDB.db.characters.toArray();
+    const mainChar =
+      currentChars.find((c) => window.CodexParser?.isMainCharacter(c)) || currentChars[0] || null;
 
     totalScenesCount = outline.scenes.length;
     let linterNotes = [];
@@ -336,7 +372,8 @@ async function writeNextChapter({
         onChunk: (chunk, full) => {
           if (onSceneStream) onSceneStream(chunk, full, i);
         },
-        onUsage: trackUsage
+        onUsage: trackUsage,
+        mainChar
       });
 
       // Cảnh rỗng thì không lưu — lần chạy sau sẽ viết lại đúng cảnh đó

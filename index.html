@@ -53,18 +53,88 @@
   <div id="cooldown-banner" class="cooldown-banner hidden"></div>
 
   <main class="book-container">
-    <section id="empty-start-screen" class="empty-start hidden" aria-label="Khởi tạo chương 1">
-      <h2 class="empty-start-title">Bạn muốn chương 1 diễn ra thế nào?</h2>
-      <textarea
-        id="ch1-direction-input"
-        class="empty-start-input"
-        rows="4"
-        placeholder="Nhập gợi ý mở đầu (bối cảnh, tình huống, tâm trạng nhân vật...)..."
-      ></textarea>
-      <p id="ch1-direction-error" class="empty-start-error hidden"></p>
-      <div class="empty-start-actions">
-        <button id="ch1-guided-btn" type="button" class="primary-btn">Viết chương 1 theo ý tôi</button>
-        <button id="ch1-free-btn" type="button" class="secondary-btn">Tự do sáng tác</button>
+<section id="empty-start-screen" class="empty-start hidden" aria-label="Bắt đầu truyện mới">
+      <h2 class="empty-start-title">Hôm nay bạn muốn đọc câu chuyện gì?</h2>
+
+      <div class="quick-block">
+        <label for="quick-char-input">Nhân vật</label>
+        <div id="quick-char-list" class="quick-chip-list"></div>
+        <div class="quick-input-row">
+          <input id="quick-char-input" type="text" placeholder="Toàn - Nam - 37 tuổi - Tu tiên giả đến từ thế giới tu tiên" />
+          <button id="quick-char-add" type="button" class="step-btn" title="Thêm nhân vật">+ Nhân vật</button>
+        </div>
+      </div>
+
+      <div class="quick-block">
+        <label for="quick-world-input">Bối cảnh</label>
+        <div id="quick-world-list" class="quick-chip-list"></div>
+        <div class="quick-input-row">
+          <input id="quick-world-input" type="text" placeholder="khách sạn ma ám ở quận 1 - HCM" />
+          <button id="quick-world-add" type="button" class="step-btn" title="Thêm bối cảnh">+ Bối cảnh</button>
+        </div>
+      </div>
+
+      <div class="quick-block">
+        <label>Thể loại (chọn nhiều)</label>
+        <div id="start-genres" class="chip-grid">
+          <label class="chip-item"><input type="checkbox" value="Hài đen" /><span>Hài đen</span></label>
+          <label class="chip-item"><input type="checkbox" value="Gore" /><span>Gore</span></label>
+          <label class="chip-item"><input type="checkbox" value="Phiêu lưu" /><span>Phiêu lưu</span></label>
+          <label class="chip-item"><input type="checkbox" value="Kinh dị" /><span>Kinh dị</span></label>
+          <label class="chip-item"><input type="checkbox" value="Bí ẩn" /><span>Bí ẩn</span></label>
+          <label class="chip-item"><input type="checkbox" value="Giả tưởng" /><span>Giả tưởng</span></label>
+          <label class="chip-item"><input type="checkbox" value="Khoa học viễn tưởng" /><span>Khoa học viễn tưởng</span></label>
+          <label class="chip-item"><input type="checkbox" value="Lãng mạn" /><span>Lãng mạn</span></label>
+          <label class="chip-item"><input type="checkbox" value="Giật gân" /><span>Giật gân</span></label>
+          <label class="chip-item"><input type="checkbox" value="Tâm lý" /><span>Tâm lý</span></label>
+          <label class="chip-item"><input type="checkbox" value="Hành động" /><span>Hành động</span></label>
+          <label class="chip-item"><input type="checkbox" value="Siêu nhiên" /><span>Siêu nhiên</span></label>
+        </div>
+      </div>
+
+      <div class="quick-block">
+        <label>Kịch tính</label>
+        <div class="seg-group" data-start-seg="drama">
+          <button type="button" class="seg-btn" data-val="Cao">Cao</button>
+          <button type="button" class="seg-btn active" data-val="Trung bình">Trung bình</button>
+          <button type="button" class="seg-btn" data-val="Thấp">Thấp</button>
+        </div>
+      </div>
+
+      <div class="quick-block">
+        <label>Tỉ lệ nhân vật phụ chết</label>
+        <div class="seg-group" data-start-seg="deathRate">
+          <button type="button" class="seg-btn" data-val="Cao">Cao</button>
+          <button type="button" class="seg-btn active" data-val="Trung bình">Trung bình</button>
+          <button type="button" class="seg-btn" data-val="Thấp">Thấp</button>
+        </div>
+      </div>
+
+      <div class="quick-block">
+        <label>Kết thúc truyện</label>
+        <div class="seg-group" data-start-seg="ending">
+          <button type="button" class="seg-btn" data-val="Happy Ending">Happy Ending</button>
+          <button type="button" class="seg-btn" data-val="Sad Ending">Sad Ending</button>
+          <button type="button" class="seg-btn active" data-val="Kết thúc mở">Kết thúc mở</button>
+        </div>
+      </div>
+
+      <details class="start-extra">
+        <summary>Tùy chỉnh thêm (Gợi ý mở đầu, toàn màn hình, phông chữ)</summary>
+        <div class="start-extra-body">
+          <textarea id="ch1-direction-input" class="empty-start-input" rows="2" placeholder="Gợi ý mở đầu Chương 1 (tùy chọn — bỏ trống để AI tự sáng tác)..."></textarea>
+          <label class="toggle-row">
+            <input id="start-fullscreen-toggle" type="checkbox" />
+            <span>Mở toàn màn hình khi viết</span>
+          </label>
+          <button id="start-open-font-btn" type="button" class="step-btn">Chỉnh phông &amp; cỡ chữ</button>
+        </div>
+      </details>
+
+      <button id="start-write-ch1-btn" type="button" class="primary-btn start-cta-btn">Viết Chương 1</button>
+
+      <div class="start-footer">
+        <button id="start-import-docx-link" type="button" class="text-link-btn">Nhập file .docx</button>
       </div>
     </section>
 
@@ -76,7 +146,7 @@
     </section>
     <div id="suggestion-panel" class="suggestion-panel hidden">
       <label for="next-chapter-suggestion">Gợi ý cho chương tiếp theo</label>
-      <textarea id="next-chapter-suggestion" rows="3" placeholder="Ví dụ: Kai gặp lại Alxece ở tầng 0, nhưng cô ấy không còn nhớ anh…"></textarea>
+      <textarea id="next-chapter-suggestion" rows="3" placeholder="Ví dụ: Toàn gặp lại Lan ở bến tàu cũ, nhưng cô ấy không còn nhớ anh…"></textarea>
       <div class="writer-actions">
         <button id="write-suggested-btn" type="button" class="primary-btn">Viết chương mới theo gợi ý</button>
         <button id="cancel-suggestion-btn" type="button" class="step-btn">Đóng</button>
@@ -206,7 +276,7 @@
         <p id="codex-form-title" class="form-section-title">Chỉnh sửa / Bổ sung nhân vật</p>
         <div class="setting-group">
           <label for="input-char-name">Tên nhân vật</label>
-          <input id="input-char-name" type="text" required placeholder="Ví dụ: Kael hoặc Alxece" />
+          <input id="input-char-name" type="text" required placeholder="Ví dụ: Toàn hoặc Lan" />
         </div>
         <div class="setting-group">
           <label for="input-char-code">Mã tra cứu</label>

@@ -10,7 +10,9 @@ const FIELD_LABELS = [
   [/^(kỹ năng|năng lực|sức mạnh|chiêu thức|đặc quyền zeus|skills|abilities|skills_abilities)$/i, 'skills_abilities'],
   [/^(vật phẩm|túi đồ|trang bị|bảo vật|vũ khí chính|chiến giáp|khu dự trữ bia|inventory|inventory_default)$/i, 'inventory_default'],
   [/^(giọng điệu|cách nói|lời thoại|speech|speech_style)$/i, 'speech_style'],
-  [/^(ràng buộc|cấm kỵ|giới hạn|điểm yếu|hard_constraints|constraints)$/i, 'hard_constraints']
+  [/^(ràng buộc|cấm kỵ|giới hạn|điểm yếu|hard_constraints|constraints)$/i, 'hard_constraints'],
+  [/^(điểm mù|điểm mù nội tâm|niềm tin sai lầm|misbelief)$/i, 'misbelief'],
+  [/^(vết thương|vết thương lòng|chủ đề cấm kỵ|third ?rail)$/i, 'thirdRail']
 ];
 
 const STRUCTURAL_HEADING_RE =
@@ -27,9 +29,102 @@ function emptyChar(name = '') {
     inventory_default: '',
     speech_style: '',
     hard_constraints: '',
+    misbelief: '',
+    thirdRail: '',
+    isMain: null, // true = Chính, false = Phụ, null = tự động
     portrait: '',
     state: { level: '', injuries: '', inventory: '' }
   };
+}
+
+function capitalizeName(raw) {
+  return String(raw || '')
+    .trim()
+    .split(/\s+/)
+    .map((w) => {
+      if (!w) return '';
+      const head = w[0].toLocaleUpperCase('vi-VN');
+      // Chỉ hạ thấp phần đuôi khi từ đang VIẾT HOA toàn bộ ('NGUYỄN' -> 'Nguyễn');
+      // tên camelCase ('SeedOne') giữ nguyên đuôi.
+      const tail = w === w.toLocaleUpperCase('vi-VN') ? w.slice(1).toLocaleLowerCase('vi-VN') : w.slice(1);
+      return head + tail;
+    })
+    .join(' ');
+}
+
+function isMainCharacter(char) {
+  if (!char) return false;
+  if (char.isMain === true) return true;
+  if (char.isMain === false) return false;
+  return Boolean(
+    char.portrait ||
+      char.avatar ||
+      /-CHR-/i.test(char.code || '') ||
+      String(char.personality || char.description || '').length > 500
+  );
+}
+
+// Parser 1 dòng: "Toàn - Nam - 37 tuổi - Tu tiên giả đến từ thế giới tu tiên" (hỗ trợ ' - ' hoặc ',')
+function parseSingleLineCharacter(line, defaultIsMain = true) {
+  const parts = String(line || '')
+    .trim()
+    .replace(/[.。]+$/, '')
+    .split(/\s+[-–—]\s+|,\s*/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+
+  const char = emptyChar(capitalizeName(parts[0]));
+  char.isMain = defaultIsMain;
+
+  const appParts = [];
+  const bioParts = [];
+  for (let i = 1; i < parts.length; i++) {
+    const seg = parts[i];
+    if (/^(nam|nữ|phi giới tính|khác)$/i.test(seg) || /\b\d{1,4}\s*tuổi\b/i.test(seg)) {
+      appParts.push(seg);
+    } else {
+      bioParts.push(seg);
+    }
+  }
+  char.appearance = appParts.join(', ');
+  char.personality = bioParts.join(', ');
+  char.description = char.personality || char.appearance;
+  return char;
+}
+
+// Pass 2 tối giản: CHỈ chạy khi Pass 1 tìm 0 nhân vật và tài liệu không phải file thế giới
+function parseMinimalLines(lines) {
+  const results = [];
+  const isShortDoc = lines.length <= 15;
+  const badStartRe = /^(khi|nếu|vì|nhưng|trong|sau|trước|một|những|các|để|từ|tại)\b/i;
+
+  for (const raw of lines) {
+    const line = raw.replace(/^[-*•]\s*/, '').trim();
+    if (!line || line.length > 220) continue;
+    if (/^[A-ZÀ-Ỹ][A-Za-zÀ-ỹ0-9\s]{0,24}:\s+/.test(line)) continue; // Bỏ qua dòng thoại
+    if (CODE_ANYWHERE_RE.test(line) || STRUCTURAL_HEADING_RE.test(line)) continue;
+
+    const parts = line.split(/,\s*/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length < 2 || parts.length > 6) continue;
+
+    const first = parts[0];
+    const wordCount = first.split(/\s+/).length;
+    if (wordCount < 1 || wordCount > 4 || first.length > 32 || /[.?!]/.test(first) || badStartRe.test(first)) {
+      continue;
+    }
+
+    const rest = parts.slice(1).join(', ');
+    const hasIdentitySignal =
+      /\b\d{1,4}\s*tuổi\b/i.test(rest) ||
+      /(đến từ|quê|thuộc|sinh ra|tu tiên|kiếm tu|pháp sư|thám tử|chiến binh|sát thủ|bác sĩ|học sinh)/i.test(rest);
+
+    if (hasIdentitySignal || isShortDoc) {
+      const char = parseSingleLineCharacter(line, null); // isMain = null (auto)
+      if (char && char.name) results.push(char);
+    }
+  }
+  return results;
 }
 
 function matchStandaloneLabel(line) {
@@ -242,6 +337,13 @@ function parseCodexText(text) {
   }
 
   flushChar();
+  const isWorldDoc =
+      hardRules.length > 0 ||
+      softLore.length > 0 ||
+      /(thiết lập nền|hồ sơ địa phương|bách khoa thế giới)/i.test(String(text || ''));
+    if (characters.length === 0 && !isWorldDoc) {
+      characters.push(...parseMinimalLines(lines));
+    }
   // Gộp các bản ghi trùng mã (VD: hồ sơ nhân vật trong file + danh mục tra cứu cuối file)
   const byCode = new Map();
   for (const c of characters) {
@@ -251,7 +353,7 @@ function parseCodexText(text) {
       continue;
     }
     const prev = byCode.get(key);
-    for (const k of ['aliases', 'appearance', 'personality', 'skills_abilities', 'inventory_default', 'speech_style', 'hard_constraints', 'portrait']) {
+    for (const k of ['aliases', 'appearance', 'personality', 'skills_abilities', 'inventory_default', 'speech_style', 'hard_constraints', 'portrait', 'misbelief', 'thirdRail', 'isMain']) {
       if (!prev[k] && c[k]) prev[k] = c[k];
     }
   }
@@ -318,6 +420,9 @@ async function autoSplitDocxCodex(text) {
 
 window.CodexParser = {
   emptyChar,
+  capitalizeName,
+  isMainCharacter,
+  parseSingleLineCharacter,
   parseCodexText,
   extractCodexWithLLM,
   autoSplitDocxCodex

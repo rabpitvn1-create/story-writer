@@ -2,9 +2,9 @@ const SETTINGS_KEY = 'story_writer_settings_v1';
 const CODEX_KEY = 'story_writer_mock_codex_v1';
 const DOCX_CODEX_KEY = 'story_writer_docx_raw_v1';
 
-// Ảnh chân dung mẫu (SVG data URI) cho Kael để thấy sẵn cách cắt avatar vuông;
-// Alxece không có ảnh nên mặc định hiển thị dạng nhân vật phụ (không có ô avatar).
-const SAMPLE_KAEL_PORTRAIT =
+// Ảnh chân dung mẫu (SVG data URI) cho nhân vật chính mẫu để thấy sẵn cách cắt avatar vuông;
+// Lan không có ảnh nên mặc định hiển thị dạng nhân vật phụ (không có ô avatar).
+const SAMPLE_PORTRAIT =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
@@ -15,14 +15,14 @@ const SAMPLE_KAEL_PORTRAIT =
   );
 
 const DEFAULT_CODEX = {
-  Kael: {
-    name: 'Kael',
+  Toàn: {
+    name: 'Toàn',
     description:
       'Áo khoác vải sờn màu tro, vết sẹo nhỏ dưới xương gò má trái. Ít nói, quan sát kỹ và luôn mang theo một chiếc bật lửa đồng cạn xăng.',
-    portrait: SAMPLE_KAEL_PORTRAIT
+    portrait: SAMPLE_PORTRAIT
   },
-  Alxece: {
-    name: 'Alxece',
+  Lan: {
+    name: 'Lan',
     description:
       'Tóc buộc gọn sau gáy, mang ba lô vải bạt cũ. Nhạy bén với âm thanh và ghi nhớ rất tốt các ký hiệu vẽ trên tường.',
     portrait: ''
@@ -32,12 +32,12 @@ const DEFAULT_CODEX = {
 const MOCK_CHAPTER = {
   number: 1,
   blocks: [
-    { type: 'narrative', text: 'Kael nói với Alxece.' },
-    { type: 'dialogue', speaker: 'Kael', text: 'Tôi ở đây' },
-    { type: 'dialogue', speaker: 'Alxece', text: 'Tôi biết' },
+    { type: 'narrative', text: 'Toàn nói với Lan.' },
+    { type: 'dialogue', speaker: 'Toàn', text: 'Tôi ở đây' },
+    { type: 'dialogue', speaker: 'Lan', text: 'Tôi biết' },
     {
       type: 'narrative',
-      text: 'Ánh đèn huỳnh quang phía trên hành lang vẫn rít lên một âm thanh đều đặn. Kael khẽ gật đầu về phía khúc quanh tối mờ trước mặt, trong khi Alxece chỉnh lại quai ba lô và bước theo sát phía sau.'
+      text: 'Mưa gõ nhẹ lên mái hiên. Toàn khẽ gật đầu về phía con hẻm tối mờ trước mặt, trong khi Lan chỉnh lại quai ba lô và bước theo sát phía sau.'
     }
   ]
 };
@@ -723,10 +723,14 @@ function renderCharDrawer() {
       st.inventory ? `Túi đồ: ${st.inventory}` : ''
     ].filter(Boolean);
 
+    const isMain = window.CodexParser.isMainCharacter(char);
+    const roleLabel = isMain
+      ? (char.portrait ? 'Nhân vật chính' : 'Nhân vật chính • chưa có ảnh')
+      : 'Nhân vật phụ';
+
     const stateEl = document.createElement('div');
     stateEl.className = 'char-card-state';
-    stateEl.textContent =
-      stateParts.join(' • ') || (char.portrait ? 'Nhân vật chính' : 'Nhân vật phụ (chưa có ảnh)');
+    stateEl.textContent = stateParts.join(' • ') || roleLabel;
 
     info.appendChild(nameEl);
     info.appendChild(stateEl);
@@ -857,7 +861,7 @@ async function processAndSaveDocx(text) {
       await window.StoryDB.db.characters.put(merged);
     }
 
-    // Gộp luật mới vào luật đã có (theo nội dung) — tải file Kael sau file thế giới không xóa luật thế giới
+    // Gộp luật mới vào luật đã có (theo nội dung) — tải file nhân vật sau file thế giới không xóa luật thế giới
     // shortcut: luật cũ của file đã sửa vẫn còn khi tải lại, nâng cấp khi cần thay luật theo từng file
     if (parsed.hardRules.length) {
       const existing = await window.StoryDB.db.worldRules.where('type').equals('hard_rule').toArray();
@@ -921,10 +925,13 @@ function openCodex(charName) {
     portraitEl.classList.add('hidden');
   }
 
+  const isMain = window.CodexParser.isMainCharacter(char);
+  const roleLabel = isMain
+    ? (char.portrait ? 'Nhân vật chính' : 'Nhân vật chính • chưa có ảnh')
+    : 'Nhân vật phụ';
+
   document.getElementById('codex-name').textContent = char.name;
-  document.getElementById('codex-kind').textContent = char.portrait
-    ? 'Nhân vật có ảnh chân dung'
-    : 'Nhân vật phụ (chưa có ảnh)';
+  document.getElementById('codex-kind').textContent = roleLabel;
 
   const summary = [
     char.code ? `Mã tra cứu: ${char.code}` : '',
@@ -1188,8 +1195,7 @@ function setupEvents(settings) {
   const stopControls = document.getElementById('stop-controls');
   const writeBtn = document.getElementById('write-next-btn');
   const ch1Input = document.getElementById('ch1-direction-input');
-  const ch1GuidedBtn = document.getElementById('ch1-guided-btn');
-  const ch1FreeBtn = document.getElementById('ch1-free-btn');
+  const startWriteBtn = document.getElementById('start-write-ch1-btn');
 
   // Viết chương tiếp (dùng chung cho nút viết thường và viết theo gợi ý)
   async function startWriting(userDirection = '', onDone) {
@@ -1200,8 +1206,7 @@ function setupEvents(settings) {
     document.getElementById('endless-start-btn').disabled = true;
     document.getElementById('goto-next-chapter-btn').disabled = true;
     document.getElementById('suggest-next-btn').disabled = true;
-    ch1GuidedBtn.disabled = true;
-    ch1FreeBtn.disabled = true;
+    if (startWriteBtn) startWriteBtn.disabled = true;
     ch1Input.disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
@@ -1244,8 +1249,7 @@ function setupEvents(settings) {
     document.getElementById('endless-start-btn').disabled = false;
     document.getElementById('goto-next-chapter-btn').disabled = false;
     document.getElementById('suggest-next-btn').disabled = false;
-    ch1GuidedBtn.disabled = false;
-    ch1FreeBtn.disabled = false;
+    if (startWriteBtn) startWriteBtn.disabled = false;
     ch1Input.disabled = false;
     stopControls.classList.add('hidden');
   }
@@ -1280,8 +1284,7 @@ function setupEvents(settings) {
     endlessBtn.disabled = true;
     document.getElementById('goto-next-chapter-btn').disabled = true;
     document.getElementById('suggest-next-btn').disabled = true;
-    ch1GuidedBtn.disabled = true;
-    ch1FreeBtn.disabled = true;
+    if (startWriteBtn) startWriteBtn.disabled = true;
     ch1Input.disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
@@ -1321,8 +1324,7 @@ function setupEvents(settings) {
         endlessBtn.disabled = false;
         document.getElementById('goto-next-chapter-btn').disabled = false;
         document.getElementById('suggest-next-btn').disabled = false;
-        ch1GuidedBtn.disabled = false;
-        ch1FreeBtn.disabled = false;
+        if (startWriteBtn) startWriteBtn.disabled = false;
         ch1Input.disabled = false;
         stopControls.classList.add('hidden');
       }
@@ -1421,25 +1423,98 @@ function setupEvents(settings) {
     await startWriting(direction, draft?.outline ? undefined : () => { suggestionEl.value = ''; });
   });
 
-  // Màn hình khởi đầu chương 1 (khi chưa có chương nào): dùng chung startWriting,
-  // màn hình tự ẩn khi chương 1 viết xong nhờ showEmptyStartScreen(false) trong onChapterReady
-  const ch1Error = document.getElementById('ch1-direction-error');
+  // Màn hình "Bắt đầu truyện mới" (khi chưa có chương nào): nhập nhanh nhân vật/
+  // bối cảnh 1 dòng + gu truyện, rồi viết chương 1 (Seed Mode nếu codex trống).
+  // Màn hình tự ẩn khi chương 1 viết xong nhờ showEmptyStartScreen(false) trong onChapterReady
+const quickChars = [];
+  const quickWorlds = [];
 
-  document.getElementById('ch1-guided-btn').addEventListener('click', () => {
-    const dir = ch1Input.value.trim();
-    if (!dir) {
-      ch1Error.textContent = 'Vui lòng nhập gợi ý cho chương 1 hoặc bấm "Tự do sáng tác".';
-      ch1Error.classList.remove('hidden');
-      ch1Input.focus();
-      return;
-    }
-    ch1Error.classList.add('hidden');
-    startWriting(dir);
+  function renderQuickTags(containerId, items) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '';
+    items.forEach((txt, idx) => {
+      const span = document.createElement('span');
+      span.className = 'quick-tag';
+      span.textContent = txt;
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '×';
+      x.addEventListener('click', () => {
+        items.splice(idx, 1);
+        renderQuickTags(containerId, items);
+      });
+      span.appendChild(x);
+      el.appendChild(span);
+    });
+  }
+
+  const pushQuickItem = (inputId, list, containerId) => {
+    const inp = document.getElementById(inputId);
+    const val = inp.value.trim();
+    if (!val) return;
+    list.push(val);
+    inp.value = '';
+    renderQuickTags(containerId, list);
+  };
+
+  document.getElementById('quick-char-add')?.addEventListener('click', () =>
+    pushQuickItem('quick-char-input', quickChars, 'quick-char-list')
+  );
+  document.getElementById('quick-world-add')?.addEventListener('click', () =>
+    pushQuickItem('quick-world-input', quickWorlds, 'quick-world-list')
+  );
+
+  document.getElementById('start-open-font-btn')?.addEventListener('click', () => {
+    settingsModal.classList.remove('hidden');
   });
 
-  document.getElementById('ch1-free-btn').addEventListener('click', () => {
-    ch1Error.classList.add('hidden');
-    startWriting('');
+  document.getElementById('start-import-docx-link')?.addEventListener('click', () => {
+    renderDocxPreview(docxCodex);
+    importModal.classList.remove('hidden');
+  });
+
+  document.getElementById('start-write-ch1-btn')?.addEventListener('click', async () => {
+    // Tự động lấy luôn dòng đang gõ dở trong ô input nếu người dùng quên bấm "+"
+    pushQuickItem('quick-char-input', quickChars, 'quick-char-list');
+    pushQuickItem('quick-world-input', quickWorlds, 'quick-world-list');
+
+    // 1. Lưu các nhân vật 1 dòng (isMain: true)
+    for (const line of quickChars) {
+      const parsed = window.CodexParser.parseSingleLineCharacter(line, true);
+      if (parsed && parsed.name) {
+        codex[parsed.name] = parsed;
+        await window.StoryDB.db.characters.put(parsed);
+      }
+    }
+
+    // 2. Lưu bối cảnh 1 dòng -> hard_rule + ghim vào pinned_facts (L1-Core)
+    if (quickWorlds.length > 0) {
+      const pinned = await window.StoryDB.getSetting('pinned_facts', []);
+      for (const w of quickWorlds) {
+        await window.StoryDB.db.worldRules.add({ type: 'hard_rule', content: w, updatedAt: Date.now() });
+        if (!pinned.includes(w)) pinned.push(w);
+      }
+      await window.StoryDB.setSetting('pinned_facts', pinned);
+    }
+
+    // 3. Lưu gu truyện từ màn khởi đầu
+    const getStartSeg = (key, fb) =>
+      document.querySelector(`[data-start-seg="${key}"] .seg-btn.active`)?.dataset.val || fb;
+    currentStoryPrefs = {
+      genres: Array.from(document.querySelectorAll('#start-genres input:checked')).map((el) => el.value),
+      customGenre: '',
+      drama: getStartSeg('drama', 'Trung bình'),
+      sideCharDeathRate: getStartSeg('deathRate', 'Trung bình'),
+      ending: getStartSeg('ending', 'Kết thúc mở'),
+      autoFullscreen: Boolean(document.getElementById('start-fullscreen-toggle')?.checked)
+    };
+    await window.StoryDB.setSetting('storyPrefs', currentStoryPrefs);
+    if (currentStoryPrefs.autoFullscreen) toggleFullscreen(true);
+
+    renderCharDrawer();
+    const dir = (document.getElementById('ch1-direction-input')?.value || '').trim();
+    await startWriting(dir);
   });
 }
 
@@ -1470,9 +1545,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEvents(settings);
   if (dbReady) await refreshSettingsUI();
   if (dbReady) {
-    // Hiện bảng Setup ngay khi mở app, điền sẵn lựa chọn đã lưu (nếu có)
+    // Nạp gu truyện đã lưu để điền sẵn bảng Setup (chỉ mở khi người dùng bấm)
     currentStoryPrefs = { ...DEFAULT_STORY_PREFS, ...((await window.StoryDB.getSetting('storyPrefs', {})) || {}) };
     populateSetupUI(currentStoryPrefs);
-    document.getElementById('setup-modal').classList.remove('hidden');
   }
 });
