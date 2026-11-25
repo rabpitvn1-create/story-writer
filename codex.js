@@ -309,19 +309,26 @@ function appendField(char, key, value, labelPrefix = '') {
   }
 }
 
+// codex.js — mở rộng đại từ người kể cho nữ chính, người già, trẻ con + lọc tương thích giới tính & tuổi sơ bộ
 const THIRD_PERSON_PRONOUNS = [
   'anh ấy',
   'anh ta',
   'cậu ấy',
   'cô ấy',
   'cô ta',
+  'ông ấy',
+  'bà ấy',
+  'chị ấy',
+  'em ấy', // trung tính giới (em trai/em gái đều dùng được)
   'hắn',
   'chàng',
   'nàng',
-  'gã'
+  'gã',
 ];
-const MALE_ONLY_PRONOUNS = new Set(['hắn', 'anh ấy', 'anh ta', 'cậu ấy', 'chàng', 'gã']);
-const FEMALE_ONLY_PRONOUNS = new Set(['cô ấy', 'cô ta', 'nàng']);
+const MALE_ONLY_PRONOUNS = new Set(['hắn', 'anh ấy', 'anh ta', 'cậu ấy', 'chàng', 'gã', 'ông ấy']);
+const FEMALE_ONLY_PRONOUNS = new Set(['cô ấy', 'cô ta', 'nàng', 'bà ấy', 'chị ấy']);
+const ELDER_ONLY_PRONOUNS = new Set(['ông ấy', 'bà ấy']);
+const YOUTH_ONLY_PRONOUNS = new Set(['em ấy']);
 
 function extractNarratorPronoun(char) {
   if (!char) return null;
@@ -335,14 +342,36 @@ function extractNarratorPronoun(char) {
     .join('\n')
     .replace(/["“][^"”]*["”]/g, ' ');
 
-  // Kiểm tra sơ bộ tương thích giới tính từ appearance / đoạn mở đầu
-  const genderHint = `${char.appearance || ''} ${raw.slice(0, 300)}`.toLowerCase();
-  const isFemale = /(?<![\p{L}])(giới tính\s*[:\-]?\s*nữ|nữ giới|cô gái|thiếu nữ|phụ nữ)(?![\p{L}])/iu.test(genderHint);
-  const isMale = /(?<![\p{L}])(giới tính\s*[:\-]?\s*nam|nam giới|chàng trai|đàn ông)(?![\p{L}])/iu.test(genderHint);
+  // 1. Lọc tương thích giới tính — CHỈ đọc từ appearance (FIX-F1c: bỏ fallback đoạn mở đầu — từ giới tính trong bio thường chỉ NGƯỜI KHÁC nên fallback khóa nhầm; thiếu tín hiệu thì để null, digest khóa ở cuối ch.1)
+  const appearanceHint = String(char.appearance || '').toLowerCase();
+  const openingHint = raw.slice(0, 300).toLowerCase();
+  const profileHint = `${appearanceHint} ${openingHint}`;
+  const FEMALE_RE = /(?<![\p{L}])(giới tính\s*[:\-]?\s*nữ|nữ giới|cô gái|thiếu nữ|phụ nữ|bà lão|cụ bà|cô bé)(?![\p{L}])/iu;
+  const MALE_RE = /(?<![\p{L}])(giới tính\s*[:\-]?\s*nam|nam giới|chàng trai|đàn ông|ông lão|cụ ông|cậu bé)(?![\p{L}])/iu;
+  let isFemale = FEMALE_RE.test(appearanceHint);
+  let isMale = MALE_RE.test(appearanceHint);
+  // FIX-F1b/F1c: "nam/nữ" chỉ tính khi là token độc lập (sau đầu chuỗi/dấu phẩy/chấm phẩy/chấm/xuống dòng, trước dấu phẩy/chấm phẩy/chấm/xuống dòng/cuối chuỗi) — tránh "Việt Nam", "nam mô", "Nam Định", "Nữ sinh" bắt nhầm
+  if (!isFemale && !isMale) {
+    if (/(?:^|[,;.\n])\s*nữ\s*(?:[,;.\n]|$)/iu.test(appearanceHint)) isFemale = true;
+    else if (/(?:^|[,;.\n])\s*nam\s*(?:[,;.\n]|$)/iu.test(appearanceHint)) isMale = true;
+  }
+
+  // 2. Lọc tương thích tuổi sơ bộ để tránh bio kể về ông/bà/em nhỏ làm khóa nhầm đại từ người khác
+  const ageMatch = profileHint.match(/(?<![\p{L}\p{N}])(\d{1,3})\s*tuổi(?![\p{L}\p{N}])/iu);
+  const parsedAge = ageMatch ? Number(ageMatch[1]) : null;
+  const isChildOrYouth =
+    (parsedAge !== null && parsedAge < 22) ||
+    /(?<![\p{L}])(cậu bé|cô bé|đứa trẻ|trẻ con|thiếu niên|học sinh)(?![\p{L}])/iu.test(profileHint);
+  const isNotElder = (parsedAge !== null && parsedAge < 45) || isChildOrYouth;
+  const isAdultOrElder =
+    (parsedAge !== null && parsedAge >= 30) ||
+    /(?<![\p{L}])(ông lão|cụ ông|bà lão|cụ bà|trung niên|lão nhân)(?![\p{L}])/iu.test(profileHint);
 
   const candidates = THIRD_PERSON_PRONOUNS.filter((p) => {
     if (isFemale && !isMale && MALE_ONLY_PRONOUNS.has(p)) return false;
     if (isMale && !isFemale && FEMALE_ONLY_PRONOUNS.has(p)) return false;
+    if (isNotElder && ELDER_ONLY_PRONOUNS.has(p)) return false;
+    if (isAdultOrElder && YOUTH_ONLY_PRONOUNS.has(p)) return false;
     return true;
   });
 

@@ -340,14 +340,21 @@ Nội dung chương:\n${excerpt}`;
   }
 
   // Mức 2: lấy danh sách tên hợp lệ SAU khi harvest + prune đã hoàn tất
+  // Truyền fullText + charsByName để kích hoạt Bộ lọc 3 lớp (0 query DB thêm: dùng allCharsAfterHarvest đã load)
   const allCharsAfterHarvest = await window.StoryDB.db.characters.toArray();
   const allowedCharNames = allCharsAfterHarvest.map((c) => c.name).filter(Boolean);
+  const charsByName = new Map(
+    allCharsAfterHarvest
+      .filter((c) => c && c.name)
+      .map((c) => [String(c.name).trim().toLowerCase(), c])
+  );
   const nextRelationships = window.StoryMemory.mergeAddressingChanges(
     l2.relationships,
     data.addressingChanges,
     allowedCharNames,
     chapterNumber,
-    deletedNpcNames
+    deletedNpcNames,
+    { fullText, charsByName }
   );
 
   const nextLedger = {

@@ -291,7 +291,79 @@ function formatSceneRelationships(relationships, sceneQuery) {
   return `Xưng hô đã nhớ: ${parts.join('; ')} — giữ nguyên trừ khi quan hệ đổi.`;
 }
 
-function mergeAddressingChanges(existingRelationships, changes, allowedNames = [], chapterNumber = 1, deletedNames = []) {
+// memory.js — Bộ lọc Chống Đầu Độc 3 lớp (0 token, 0 call, chạy trước khi upsert l2.relationships)
+const INVALID_ADDRESS_VALUES = new Set(['không rõ', 'chưa rõ', 'chưa có', 'không có', 'none', 'null', 'n/a', 'undefined']);
+const POISON_DEFAULT_RE = /^(?:tôi\s*[-–/]\s*bạn|bạn\s*[-–/]\s*tôi|cậu\s*[-–/]\s*mình|mình\s*[-–/]\s*cậu|bạn)$/iu;
+const HOSTILE_OR_ROMANTIC_REASON_RE =
+  /(?:trở thành|là)\s*(?:người yêu|tình nhân|kẻ thù|đối thủ)|tỏ tình|yêu nhau|trở mặt|thù địch|cắt đứt/iu;
+
+// Lớp 1 — Kiểm tra hình dạng (shape): ngắn gọn 1–18 ký tự, <=4 từ, có chữ cái tiếng Việt, không rác/dấu câu
+function isValidAddressingShape(val) {
+  const clean = String(val || '').trim().replace(/\s+/g, ' ');
+  if (!clean || clean.length > 18) return false;
+  if (INVALID_ADDRESS_VALUES.has(clean.toLowerCase())) return false;
+  if (/[.!?;,\n\r{}[\]()"“”<>]/.test(clean)) return false;
+  if (!/\p{L}/u.test(clean)) return false;
+  if (clean.split(/\s+/).length > 4) return false;
+  return true;
+}
+
+// Lớp 2 — Quorum >=2 lần trong các dòng thoại "Tên: ..." của ĐÚNG người nói (from)
+function countAddressingInDialogue(fullText, speakerName, addressForm) {
+  if (!fullText || !speakerName || !addressForm) return 0;
+  const targetSpeaker = stripHonorificPrefix(speakerName);
+  const speakerLines = [];
+  const dialogueRe = /^([A-ZÀ-Ỹ][\wÀ-ỹ\s]{0,24}):\s+(.+)$/;
+
+  for (const rawLine of String(fullText).split('\n')) {
+    const m = rawLine.trim().match(dialogueRe);
+    if (!m) continue;
+    const lineSpeaker = stripHonorificPrefix(m[1]);
+    if (lineSpeaker === targetSpeaker || m[1].trim().toLowerCase() === speakerName.trim().toLowerCase()) {
+      speakerLines.push(m[2].trim());
+    }
+  }
+  if (speakerLines.length === 0) return 0;
+
+  // Nếu dạng gọi ghép 2 vế kiểu "anh-em" / "tôi-bạn": tách thành 2 vế, tính số lần vế xưng/hô cùng xuất hiện hoặc lặp >=2
+  const parts = String(addressForm)
+    .split(/\s*[-–/]\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const countTerm = (term) => {
+    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?<![\\p{L}\\p{N}_])${esc}(?![\\p{L}\\p{N}_])`, 'giu');
+    return speakerLines.reduce((sum, line) => sum + (line.match(re) || []).length, 0);
+  };
+
+  if (parts.length === 2) {
+    // Yêu cầu cả hai vế đều có mặt trong thoại của speaker VÀ vế gọi đối phương (hoặc tổng cả cặp) đạt quorum >= 2
+    const c1 = countTerm(parts[0]);
+    const c2 = countTerm(parts[1]);
+    if (c1 === 0 || c2 === 0) return 0;
+    return Math.min(c1, c2);
+  }
+  return countTerm(String(addressForm).trim());
+}
+
+// Lớp 3 — Chặn hẹp "tôi-bạn"/"cậu-mình" CHỈ khi có role === 'antagonist' hoặc reason trực tiếp là yêu/thù
+function isPoisonedDefaultAddressing(addressForm, charA, charB, reason = '') {
+  const clean = String(addressForm || '').trim();
+  if (!POISON_DEFAULT_RE.test(clean)) return false;
+  const hasAntagonist = charA?.role === 'antagonist' || charB?.role === 'antagonist';
+  const hasDirectReason = HOSTILE_OR_ROMANTIC_REASON_RE.test(String(reason || ''));
+  return hasAntagonist || hasDirectReason;
+}
+
+function mergeAddressingChanges(
+  existingRelationships,
+  changes,
+  allowedNames = [],
+  chapterNumber = 1,
+  deletedNames = [],
+  options = {}
+) {
   const deletedSet = new Set((deletedNames || []).map((n) => String(n || '').trim().toLowerCase()));
   const next = {};
 
@@ -302,7 +374,10 @@ function mergeAddressingChanges(existingRelationships, changes, allowedNames = [
     next[k] = { ...v };
   }
 
-  // Upsert các thay đổi quan sát được trong thoại (chỉ Mức 2: cả hai đều có trong allowedNames)
+  const fullText = typeof options?.fullText === 'string' ? options.fullText : null;
+  const minQuorum = Number.isInteger(options?.minQuorum) ? options.minQuorum : 2;
+  const charsByName = options?.charsByName && typeof options.charsByName.get === 'function' ? options.charsByName : new Map();
+
   for (const ch of Array.isArray(changes) ? changes : []) {
     if (!ch || !ch.a || !ch.b) continue;
     const canonA = resolveKnownCharName(ch.a, allowedNames);
@@ -310,8 +385,26 @@ function mergeAddressingChanges(existingRelationships, changes, allowedNames = [
     if (!canonA || !canonB || canonA === canonB) continue;
     if (deletedSet.has(canonA.toLowerCase()) || deletedSet.has(canonB.toLowerCase())) continue;
 
-    const valAB = String(ch.aToB || '').trim();
-    const valBA = String(ch.bToA || '').trim();
+    const charA = charsByName.get(canonA.toLowerCase()) || null;
+    const charB = charsByName.get(canonB.toLowerCase()) || null;
+    const reason = String(ch.reason || '');
+
+    const filterDirection = (rawVal, speakerName) => {
+      const val = String(rawVal || '').trim().replace(/\s+/g, ' ');
+      if (!val) return '';
+      // Lớp 1: shape
+      if (!isValidAddressingShape(val)) return '';
+      // Lớp 3: chặn hẹp mặc định dịch máy cho antagonist / reason yêu-thù
+      if (isPoisonedDefaultAddressing(val, charA, charB, reason)) return '';
+      // Lớp 2: quorum >= 2 lần trong dòng thoại của đúng speaker (chỉ chạy khi có fullText)
+      if (fullText !== null && countAddressingInDialogue(fullText, speakerName, val) < minQuorum) {
+        return '';
+      }
+      return val;
+    };
+
+    const valAB = filterDirection(ch.aToB, canonA);
+    const valBA = filterDirection(ch.bToA, canonB);
     if (!valAB && !valBA) continue;
 
     const { key, a, b, swapped } = makePairKey(canonA, canonB);
@@ -726,5 +819,8 @@ window.StoryMemory = {
   resolveKnownCharName,
   getActiveSceneRelationships,
   formatSceneRelationships,
-  mergeAddressingChanges
+  mergeAddressingChanges,
+  isValidAddressingShape,
+  countAddressingInDialogue,
+  isPoisonedDefaultAddressing
 };
