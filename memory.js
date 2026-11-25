@@ -21,6 +21,7 @@ function buildVoiceHandbook(mainChar = null) {
     '- Nhân vật có sẵn Ngoại hình/Trang bị trong hồ sơ thì BẮT BUỘC dùng đúng tên đồ đó, cấm tự bịa vũ khí/trang phục mới; chỗ nào hồ sơ để trống mới được tự bịa.',
     '- NPC quần chúng cấm trùng tên nhân vật có sẵn, không chiếm tâm điểm.',
     '- Xưng hô đúng quan hệ/vai vế (anh/em/chú/cô/bác/ông/bà/cậu/tôi); cấm mặc định tôi-bạn/cậu-mình.',
+    '- Dùng tiếng Việt chuẩn, rõ nghĩa; không tự ghép từ lạ, không chèn chữ Hán hay tiếng Anh vào văn xuôi.',
     '- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).'
   ]
     .filter(Boolean)
@@ -429,6 +430,98 @@ function mergeAddressingChanges(
   return next;
 }
 
+// Bộ đếm lỗi từ vựng tầng 1 (0 call, 0 token)
+const LEXICAL_CJK_RE = /[\u4E00-\u9FFF]/gu;
+const LEXICAL_DUP_RE = /(?<![\p{L}\p{N}_])(\p{L}[\p{L}\p{M}]*)\s+\1(?![\p{L}\p{N}_])/giu;
+const LEXICAL_DUP_WHITELIST = new Set([
+  'từ',
+  'khẽ',
+  'nhè',
+  'đều',
+  'rè',
+  'xè',
+  'cộp',
+  'tõm',
+  'đêm',
+  'ngày',
+  'đi',
+  'nhanh',
+  'chậm',
+  // FIX-L2: từ láy màu hợp lệ ("đỏ đỏ", "xanh xanh" là sắc thái, không phải lỗi gõ)
+  'đỏ',
+  'xanh',
+  'vàng',
+  'trắng',
+  'đen',
+  'hồng',
+  'tím',
+  'nâu',
+  // FIX-L3 (tự phát hiện khi probe, ngoài lệnh gốc): từ láy giảm nhẹ hợp lệ ("xa xa", "nhẹ nhẹ", "nhỏ nhỏ") — auto-fix mà gộp sẽ làm sai nghĩa văn đúng
+  'xa',
+  'gần',
+  'nhẹ',
+  'nhỏ',
+  'vui',
+  'buồn',
+  'to',
+  'cao',
+  'dài',
+  'ngắn',
+  'thấp',
+  'lặng',
+  'im'
+]);
+// FIX-L1: đã xóa "say" ("say rượu") và "day" ("day dứt") — là âm tiết tiếng Việt, không phải từ Anh
+const LEXICAL_EN_FUNC_RE =
+  /(?<![\p{L}\p{N}_])(?:under|with|from|into|between|through|the|and|for|about|over|after|before|during|without|within|against|among|across|behind|beyond|upon|along|around|because|while|which|that|this|these|those|what|when|where|why|how|but|not|are|was|were|been|have|has|had|will|would|could|should|might|must|shall|at|on|or|up|out|off|all|any|one|two|first|last|new|old|big|get|got|let|see|way)(?![\p{L}\p{N}_])/gu;
+
+function extractLexicalContext(str, index, matchLen) {
+  const half = Math.max(0, Math.floor((40 - matchLen) / 2));
+  const start = Math.max(0, index - half);
+  const end = Math.min(str.length, start + 40);
+  return str.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+function countLexicalIssues(text) {
+  const str = String(text || '');
+  let cjk = 0;
+  let enFunc = 0;
+  let dup = 0;
+  const details = [];
+  // Cắt ví dụ theo từng loại (4/3/3) để ví dụ không rỗng khi lỗi dồn một loại
+  const caps = { cjk: 4, enFunc: 3, dup: 3 };
+  const counts = { cjk: 0, enFunc: 0, dup: 0 };
+  const pushDetail = (type, word, index, matchLen) => {
+    if (counts[type] >= caps[type]) return;
+    counts[type]++;
+    details.push({
+      type,
+      word,
+      index,
+      context: extractLexicalContext(str, index, matchLen)
+    });
+  };
+
+  for (const m of str.matchAll(LEXICAL_CJK_RE)) {
+    cjk++;
+    pushDetail('cjk', m[0], m.index, m[0].length);
+  }
+
+  for (const m of str.matchAll(LEXICAL_EN_FUNC_RE)) {
+    enFunc++;
+    pushDetail('enFunc', m[0], m.index, m[0].length);
+  }
+
+  for (const m of str.matchAll(LEXICAL_DUP_RE)) {
+    const baseWord = m[1].toLowerCase();
+    if (LEXICAL_DUP_WHITELIST.has(baseWord)) continue;
+    dup++;
+    pushDetail('dup', m[0], m.index, m[0].length);
+  }
+
+  return { cjk, enFunc, dup, details };
+}
+
 // JS Style Linter chạy cục bộ (0 API call)
 function lintScene(text, options = {}) {
   const warnings = [];
@@ -515,6 +608,26 @@ function lintScene(text, options = {}) {
       warnings.push(`Câu văn đang hơi dài (trung bình ${Math.round(avgWords)} từ/câu), hãy tách câu gọn và sắc hơn.`);
     }
   }
+
+  // Kiểm tra lỗi từ vựng tầng 1 (CJK, từ chức năng tiếng Anh)
+  const lex = countLexicalIssues(text);
+  if (lex.cjk > 0) {
+    const sample = lex.details
+      .filter((d) => d.type === 'cjk')
+      .slice(0, 3)
+      .map((d) => `"${d.word}" trong "${d.context}"`)
+      .join('; ');
+    warnings.push(`Phát hiện ký tự Hán trong văn xuôi (VD: ${sample}); viết lại bằng chữ Việt.`);
+  }
+  if (lex.enFunc > 0) {
+    const sample = lex.details
+      .filter((d) => d.type === 'enFunc')
+      .slice(0, 3)
+      .map((d) => `"${d.word}" trong "${d.context}"`)
+      .join('; ');
+    warnings.push(`Phát hiện từ tiếng Anh lọt vào văn xuôi (VD: ${sample}); viết lại bằng chữ Việt.`);
+  }
+  // Không cảnh báo lặp âm tiết: bộ đếm dup dương tính giả cao trên văn thật (từ láy hợp lệ, trùng âm tiết qua ranh giới từ) — chỉ dùng để đo.
 
   return warnings;
 }
@@ -803,6 +916,7 @@ window.StoryMemory = {
   buildCharCoreCard,
   retrieveDynamicCanon,
   lintScene,
+  countLexicalIssues,
   getL1HardCanon,
   getL2Ledger,
   saveL2Ledger,
