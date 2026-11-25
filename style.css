@@ -648,3 +648,48 @@ body {
   color: var(--ink);
   resize: vertical;
 }
+
+/* Màn hình khởi đầu khi chưa có chương nào */
+.empty-start {
+  padding: 28px 4px 16px;
+}
+
+.empty-start-title {
+  margin: 0 0 18px;
+  font-family: var(--reader-font);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ink);
+}
+
+.empty-start-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: var(--paper-surface);
+  color: var(--ink);
+  font-family: var(--reader-font);
+  font-size: 16px;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.empty-start-input:focus {
+  outline: 1.5px solid var(--accent);
+}
+
+.empty-start-error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #9e2a2b;
+}
+
+.empty-start-actions {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

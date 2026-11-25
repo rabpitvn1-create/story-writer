@@ -261,12 +261,32 @@ function appendLinkedText(container, text) {
 
 let currentChapterNumber = 1;
 
-async function loadAndRenderLatestChapter() {
-  const latest = await window.StoryDB.db.chapters.orderBy('number').last();
-  if (latest) {
-    currentChapterNumber = latest.number;
-    renderChapter(latest);
+function showEmptyStartScreen(show) {
+  const emptyEl = document.getElementById('empty-start-screen');
+  const storyEl = document.getElementById('story-content');
+  if (show) {
+    document.getElementById('chapter-title').textContent = 'CHAPTER 1';
+    emptyEl.classList.remove('hidden');
+    storyEl.classList.add('hidden');
   } else {
+    emptyEl.classList.add('hidden');
+    storyEl.classList.remove('hidden');
+  }
+}
+
+async function loadAndRenderLatestChapter() {
+  try {
+    const latest = await window.StoryDB.db.chapters.orderBy('number').last();
+    if (latest) {
+      showEmptyStartScreen(false);
+      currentChapterNumber = latest.number;
+      renderChapter(latest);
+    } else {
+      showEmptyStartScreen(true);
+    }
+  } catch {
+    // Chỉ dùng MOCK_CHAPTER làm dự phòng khi IndexedDB lỗi không tải được
+    showEmptyStartScreen(false);
     currentChapterNumber = MOCK_CHAPTER.number;
     renderChapter(MOCK_CHAPTER);
   }
@@ -275,6 +295,7 @@ async function loadAndRenderLatestChapter() {
 async function openChapterByNumber(num) {
   const ch = await window.StoryDB.db.chapters.get(num);
   if (ch) {
+    showEmptyStartScreen(false);
     currentChapterNumber = ch.number;
     renderChapter(ch);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -715,6 +736,9 @@ function setupEvents(settings) {
   const statusEl = document.getElementById('writer-status');
   const stopControls = document.getElementById('stop-controls');
   const writeBtn = document.getElementById('write-next-btn');
+  const ch1Input = document.getElementById('ch1-direction-input');
+  const ch1GuidedBtn = document.getElementById('ch1-guided-btn');
+  const ch1FreeBtn = document.getElementById('ch1-free-btn');
 
   // Viết chương tiếp (dùng chung cho nút viết thường và viết theo gợi ý)
   async function startWriting(userDirection = '', onDone) {
@@ -725,6 +749,9 @@ function setupEvents(settings) {
     document.getElementById('endless-start-btn').disabled = true;
     document.getElementById('goto-next-chapter-btn').disabled = true;
     document.getElementById('suggest-next-btn').disabled = true;
+    ch1GuidedBtn.disabled = true;
+    ch1FreeBtn.disabled = true;
+    ch1Input.disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
 
@@ -738,6 +765,7 @@ function setupEvents(settings) {
         codex = Object.fromEntries(chars.map((c) => [c.name, c]));
         renderCharDrawer();
         currentChapterNumber = chapterRecord.number;
+        showEmptyStartScreen(false);
         renderChapter(chapterRecord);
         window.scrollTo({ top: 0, behavior: 'smooth' });
         if (onDone) onDone(chapterRecord);
@@ -748,6 +776,9 @@ function setupEvents(settings) {
     document.getElementById('endless-start-btn').disabled = false;
     document.getElementById('goto-next-chapter-btn').disabled = false;
     document.getElementById('suggest-next-btn').disabled = false;
+    ch1GuidedBtn.disabled = false;
+    ch1FreeBtn.disabled = false;
+    ch1Input.disabled = false;
     stopControls.classList.add('hidden');
   }
 
@@ -780,6 +811,9 @@ function setupEvents(settings) {
     endlessBtn.disabled = true;
     document.getElementById('goto-next-chapter-btn').disabled = true;
     document.getElementById('suggest-next-btn').disabled = true;
+    ch1GuidedBtn.disabled = true;
+    ch1FreeBtn.disabled = true;
+    ch1Input.disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
 
@@ -792,6 +826,7 @@ function setupEvents(settings) {
         codex = Object.fromEntries(chars.map((c) => [c.name, c]));
         renderCharDrawer();
         currentChapterNumber = chapterRecord.number;
+        showEmptyStartScreen(false);
         renderChapter(chapterRecord);
       },
       onFinished: () => {
@@ -799,6 +834,9 @@ function setupEvents(settings) {
         endlessBtn.disabled = false;
         document.getElementById('goto-next-chapter-btn').disabled = false;
         document.getElementById('suggest-next-btn').disabled = false;
+        ch1GuidedBtn.disabled = false;
+        ch1FreeBtn.disabled = false;
+        ch1Input.disabled = false;
         stopControls.classList.add('hidden');
       }
     });
@@ -851,6 +889,27 @@ function setupEvents(settings) {
       draft = null;
     }
     await startWriting(direction, draft?.outline ? undefined : () => { suggestionEl.value = ''; });
+  });
+
+  // Màn hình khởi đầu chương 1 (khi chưa có chương nào): dùng chung startWriting,
+  // màn hình tự ẩn khi chương 1 viết xong nhờ showEmptyStartScreen(false) trong onChapterReady
+  const ch1Error = document.getElementById('ch1-direction-error');
+
+  document.getElementById('ch1-guided-btn').addEventListener('click', () => {
+    const dir = ch1Input.value.trim();
+    if (!dir) {
+      ch1Error.textContent = 'Vui lòng nhập gợi ý cho chương 1 hoặc bấm "Tự do sáng tác".';
+      ch1Error.classList.remove('hidden');
+      ch1Input.focus();
+      return;
+    }
+    ch1Error.classList.add('hidden');
+    startWriting(dir);
+  });
+
+  document.getElementById('ch1-free-btn').addEventListener('click', () => {
+    ch1Error.classList.add('hidden');
+    startWriting('');
   });
 }
 

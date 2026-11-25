@@ -43,6 +43,21 @@
   <div id="cooldown-banner" class="cooldown-banner hidden"></div>
 
   <main class="book-container">
+    <section id="empty-start-screen" class="empty-start hidden" aria-label="Khởi tạo chương 1">
+      <h2 class="empty-start-title">Bạn muốn chương 1 diễn ra thế nào?</h2>
+      <textarea
+        id="ch1-direction-input"
+        class="empty-start-input"
+        rows="4"
+        placeholder="Nhập gợi ý mở đầu (bối cảnh, tình huống, tâm trạng nhân vật...)..."
+      ></textarea>
+      <p id="ch1-direction-error" class="empty-start-error hidden"></p>
+      <div class="empty-start-actions">
+        <button id="ch1-guided-btn" type="button" class="primary-btn">Viết chương 1 theo ý tôi</button>
+        <button id="ch1-free-btn" type="button" class="secondary-btn">Tự do sáng tác</button>
+      </div>
+    </section>
+
     <article id="story-content" class="book-page"></article>
 
     <section class="chapter-end" aria-label="Cuối chương">
