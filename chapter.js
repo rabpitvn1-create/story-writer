@@ -237,11 +237,11 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
     const lastCh = await window.StoryDB.db.chapters.orderBy('number').last();
     const chapterNumber = draft ? draft.number : (lastCh ? lastCh.number + 1 : 1);
 
-    const l1 = await window.StoryMemory.getL1HardCanon();
     const l2 = await window.StoryMemory.getL2Ledger();
     const l3 = await window.StoryMemory.getL3Summaries();
-    const l4Hits = await window.StoryMemory.searchL4Chapters((l2.openHooks || []).join(' '), 2);
     const prefsDirective = await getStoryPrefsDirective();
+    const outlineQuery = [userDirection, l2.location, ...(l2.openHooks || [])].filter(Boolean).join(' ');
+    const l4Hits = await window.StoryMemory.searchL4Chapters(outlineQuery, 2);
 
     let outline = draft?.outline;
     let sceneTexts = draft?.sceneTexts || [];
@@ -256,7 +256,8 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
         ? await window.EndlessManager.getCreativityConstraints(l2)
         : null;
       onStatus(`Chương ${chapterNumber}: Đang lập dàn ý (Hướng: ${creativity?.branchLabel || 'Tự do'})...`);
-      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective);
+      const outlineL1 = await window.StoryMemory.getL1HardCanon(outlineQuery, true);
+      outline = await generateOutline(chapterNumber, outlineL1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
 
@@ -265,13 +266,15 @@ async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }
       const scene = outline.scenes[i];
       const prevText = sceneTexts[i - 1] || '';
       const rollingTail = prevText ? prevText.split(/\s+/).slice(-650).join(' ') : '';
+      const sceneQuery = `${scene.goal || ''} ${scene.beats || ''}`.trim();
+      const sceneL1 = await window.StoryMemory.getL1HardCanon(sceneQuery, true);
 
       onStatus(`Chương ${chapterNumber}: Đang viết cảnh ${i + 1}/3...`);
       const sceneText = await writeSingleScene({
         chapterNumber,
         scene,
         totalScenes: outline.scenes.length,
-        l1,
+        l1: sceneL1,
         l2,
         l3,
         rollingTail,
