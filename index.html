@@ -247,6 +247,9 @@
         <button id="new-story-btn" type="button" class="danger-btn" style="width:100%;">
           Bắt đầu truyện mới
         </button>
+        <button id="restore-story-btn" type="button" class="secondary-btn" style="width:100%;margin-top:8px;">
+          Khôi phục truyện đã xóa
+        </button>
       </div>
       </div>
     </div>
@@ -406,6 +409,38 @@
         <button class="close-btn" data-close="toc-modal" aria-label="Đóng">&times;</button>
       </div>
       <div id="toc-list" class="toc-list"></div>
+    </div>
+  </div>
+  <!-- Bottom Sheet nhập thống nhất (+ Nhân vật / + Bối cảnh) -->
+  <div id="unified-add-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="modal-header">
+        <h2 id="unified-add-title">Thêm nhân vật</h2>
+        <button class="close-btn" data-close="unified-add-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <textarea id="unified-add-textarea" rows="3" class="empty-start-input" placeholder="Gõ 1 dòng hoặc nhiều mục cách nhau bằng ; hoặc xuống dòng..."></textarea>
+      <p class="docx-status" style="margin:6px 0 12px;">Gõ nhiều mục cách nhau bằng dấu ; hoặc xuống dòng.</p>
+      <button id="unified-add-next-btn" type="button" class="primary-btn">Tiếp tục</button>
+      <div class="sheet-or">hoặc</div>
+      <button id="unified-upload-docx-btn" type="button" class="secondary-btn">Tải file .docx từ máy</button>
+    </div>
+  </div>
+
+  <!-- Màn Xem trước & Chọn nhiều + Gán vai -->
+  <div id="preview-pick-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="modal-header">
+        <h2>Xem trước &amp; Chọn</h2>
+        <button class="close-btn" data-close="preview-pick-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <div id="preview-ai-role-wrap" class="hidden" style="margin-bottom:10px;">
+        <button id="preview-ai-role-btn" type="button" class="step-btn" style="width:100%;">Nhờ AI gợi ý vai trò (1 call)</button>
+      </div>
+      <div id="preview-chars-section"></div>
+      <div id="preview-rules-section"></div>
+      <button id="preview-confirm-save-btn" type="button" class="primary-btn" style="margin-top:12px;">Lưu mục đã chọn</button>
     </div>
   </div>
 </body>

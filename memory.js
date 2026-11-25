@@ -14,6 +14,8 @@ function buildVoiceHandbook(mainChar = null) {
     '- Tả thực (Show, Don\'t Tell): Không gọi tên cảm xúc trực tiếp, hãy tả phản xạ cơ thể và chi tiết vật lý.',
     speechLine,
     misbeliefLine,
+    '- Nhân vật có sẵn Ngoại hình/Trang bị trong hồ sơ thì BẮT BUỘC dùng đúng tên đồ đó, cấm tự bịa vũ khí/trang phục mới; chỗ nào hồ sơ để trống mới được tự bịa.',
+    '- NPC quần chúng cấm trùng tên nhân vật có sẵn, không chiếm tâm điểm.',
     '- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).'
   ]
     .filter(Boolean)
@@ -128,13 +130,19 @@ function truncateText(text, maxChars) {
 
 // Tạo thẻ lõi nhân vật gọn (~500-600 ký tự), ưu tiên trường cấu trúc trước
 function buildCharCoreCard(char, maxChars = 600) {
-  const header = char.code ? `- ${char.name} [${char.code}]` : `- ${char.name}`;
+  const invText = window.CodexParser
+    ? window.CodexParser.extractInventorySummary(char.inventory_default, 220)
+    : truncateText(char.inventory_default, 220);
+  const roleTag = char.role ? `(${char.role})` : '';
+  const header = char.code ? `- ${char.name} [${char.code}] ${roleTag}`.trim() : `- ${char.name} ${roleTag}`.trim();
   const priorityParts = [
-    char.aliases ? `Danh hiệu: ${truncateText(char.aliases, 100)}` : '',
-    char.hard_constraints ? `Ràng buộc: ${truncateText(char.hard_constraints, 160)}` : '',
-    char.speech_style ? `Giọng điệu: ${truncateText(char.speech_style, 140)}` : '',
-    char.misbelief ? `Điểm mù: ${truncateText(char.misbelief, 110)}` : '',
-        char.thirdRail ? `Vết thương/cấm kỵ: ${truncateText(char.thirdRail, 100)}` : '',
+    char.aliases ? `Danh hiệu: ${truncateText(char.aliases, 80)}` : '',
+    char.appearance ? `Ngoại hình: ${truncateText(char.appearance, 140)}` : '',
+    invText ? `Trang bị gốc: ${invText}` : '',
+    char.hard_constraints ? `Ràng buộc: ${truncateText(char.hard_constraints, 120)}` : '',
+    char.speech_style ? `Giọng điệu: ${truncateText(char.speech_style, 110)}` : '',
+    char.misbelief ? `Điểm mù: ${truncateText(char.misbelief, 90)}` : '',
+    char.thirdRail ? `Vết thương/cấm kỵ: ${truncateText(char.thirdRail, 100)}` : ''
   ].filter(Boolean);
 
   let card = priorityParts.length ? `${header} | ${priorityParts.join(' | ')}` : header;
@@ -202,6 +210,25 @@ async function retrieveDynamicCanon(query, { maxRules = 8, maxCharChunks = 2, ma
   return { rules, charChunks, lore };
 }
 
+// FIX-B3: bảng characters chỉ index theo 'name' nên không dùng where('role') (ném lỗi Dexie);
+// quét toàn bảng rồi lọc — NPC tối đa ~15 bản ghi nên không tốn kém.
+async function lookupRecurringNpcs(sceneQuery) {
+  if (!sceneQuery || !String(sceneQuery).trim()) return '';
+  const q = String(sceneQuery);
+  const all = await window.StoryDB.db.characters.toArray();
+  const matched = all
+    .filter((n) => {
+      if (n.role !== 'npc' || (n.appearances || 0) < 3 || !n.name) return false;
+      // Khớp tên riêng đúng ranh giới từ, phân biệt hoa/thường (như countNameInText):
+      // 'Lan' không khớp 'hoa lan'/'lan ra', 'Minh' không khớp 'minh chứng'.
+      const escaped = String(n.name).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'u').test(q);
+    })
+    .slice(0, 2);
+  if (matched.length === 0) return '';
+  return `QUẦN CHÚNG QUEN MẶT:\n${matched.map((n) => `- ${n.name}: ${n.note || n.personality || ''}`).join('\n')}`;
+}
+
 // JS Style Linter chạy cục bộ (0 API call)
 function lintScene(text) {
   const warnings = [];
@@ -244,11 +271,15 @@ async function getL1HardCanon(queryContext = '', includeDynamic = true) {
 
   // Ưu tiên nhân vật được nhắc tới trong queryContext, giới hạn tối đa 4 nhân vật cho L1-Core
   const qLower = String(queryContext || '').toLowerCase();
-  const orderedChars = [...chars].sort((a, b) => {
-      const aScore = (a.isMain === true ? 2 : 0) + (qLower && a.name && qLower.includes(a.name.toLowerCase()) ? 3 : 0);
-      const bScore = (b.isMain === true ? 2 : 0) + (qLower && b.name && qLower.includes(b.name.toLowerCase()) ? 3 : 0);
-      return bScore - aScore;
-    });
+  // Lọc bỏ role === 'npc' khỏi L1-Core, dùng isMainCharacter đồng bộ thay cho isMain === true
+  const coreCandidates = chars.filter((c) => c.role !== 'npc');
+  const orderedChars = [...coreCandidates].sort((a, b) => {
+    const aMain = window.CodexParser?.isMainCharacter(a) ? 5 : (a.role === 'ally' || a.role === 'antagonist' ? 2 : 0);
+    const bMain = window.CodexParser?.isMainCharacter(b) ? 5 : (b.role === 'ally' || b.role === 'antagonist' ? 2 : 0);
+    const aHit = qLower && a.name && qLower.includes(a.name.toLowerCase()) ? 3 : 0;
+    const bHit = qLower && b.name && qLower.includes(b.name.toLowerCase()) ? 3 : 0;
+    return (bMain + bHit) - (aMain + aHit);
+  });
 
   const coreCharText = orderedChars
     .slice(0, 4)
@@ -301,20 +332,61 @@ async function getL2Ledger() {
   );
 }
 
+// D-01: "" / null / undefined = KHÔNG ĐỔI; "[XÓA]" = XÓA THẬT (về "")
+const CLEAR_SENTINEL = '[XÓA]';
+
+function mergeFieldValue(oldVal, newVal) {
+  if (newVal === undefined || newVal === null) return oldVal ?? '';
+  const trimmed = String(newVal).trim();
+  if (trimmed === '') return oldVal ?? '';
+  if (trimmed === CLEAR_SENTINEL) return '';
+  return trimmed;
+}
+
+function mergeCharacterState(oldState = {}, patchState = {}) {
+  const prev = oldState || {};
+  const next = patchState || {};
+  return {
+    level: mergeFieldValue(prev.level, next.level),
+    injuries: mergeFieldValue(prev.injuries, next.injuries),
+    inventory: mergeFieldValue(prev.inventory, next.inventory),
+    pickedUpItems: mergeFieldValue(prev.pickedUpItems, next.pickedUpItems)
+  };
+}
+
 async function saveL2Ledger(nextLedger) {
   await window.StoryDB.db.ledger.put({ key: 'current', value: nextLedger, updatedAt: Date.now() });
   const states = nextLedger.characterStates || {};
   for (const [name, st] of Object.entries(states)) {
     const existing = await window.StoryDB.db.characters.get(name);
     if (existing) {
+      // D-01 (lớp 2): ledger đã merge xong ở lớp 1 nên chỉ đồng bộ nguyên trạng — "" là đã xóa/không có, KHÔNG merge lại (merge lại sẽ hồi sinh field vừa "[XÓA]")
       existing.state = {
-        level: st.level ?? existing.state?.level ?? '',
-        injuries: st.injuries ?? existing.state?.injuries ?? '',
-        inventory: st.inventory ?? existing.state?.inventory ?? ''
+        level: st.level ?? '',
+        injuries: st.injuries ?? '',
+        inventory: st.inventory ?? '',
+        pickedUpItems: st.pickedUpItems ?? ''
       };
       await window.StoryDB.db.characters.put(existing);
     }
   }
+}
+
+// [K13] hướng (a): chỉ đổ vào prompt trạng thái của nhân vật có hồ sơ thật (role !== 'npc'),
+// chỉ giữ pickedUpItems mới — không đổ trường inventory cũ (chặn đồ bịa hợp thức hóa qua l2 JSON).
+async function serializeL2ForPrompt(l2) {
+  const chars = await window.StoryDB.db.characters.toArray();
+  const allowed = new Set(chars.filter((c) => c.role !== 'npc').map((c) => c.name));
+  const cleanStates = {};
+  for (const [name, st] of Object.entries(l2?.characterStates || {})) {
+    if (!allowed.has(name) || !st) continue;
+    cleanStates[name] = {
+      level: st.level || '',
+      injuries: st.injuries || '',
+      pickedUpItems: st.pickedUpItems || ''
+    };
+  }
+  return JSON.stringify({ ...l2, characterStates: cleanStates });
 }
 
 // L3: Tóm tắt phân tầng (3-5 chương gần nhất + Arc summary mỗi 5 chương)
@@ -350,61 +422,119 @@ async function searchL4Chapters(query, limit = 2) {
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-async function harvestFromDigest(newChars = [], newRules = []) {
+function hasValidEvidence(fullText, evidenceMap, key) {
+  if (!evidenceMap || typeof evidenceMap !== 'object') return false;
+  const quote = String(evidenceMap[key] || '').trim();
+  if (quote.length < 8 || quote.length > 140) return false;
+  const normText = fullText.replace(/\s+/g, ' ').toLowerCase();
+  const normQuote = quote.replace(/\s+/g, ' ').toLowerCase();
+  return normText.includes(normQuote);
+}
+
+async function harvestFromDigest(newChars = [], newRules = [], fullText = null, chapterNumber = null, evidence = null) {
+  const isFromDigest = typeof fullText === 'string' && fullText.length > 0;
   let addedChars = 0;
   let addedRules = 0;
 
-  if (Array.isArray(newChars) && newChars.length > 0) {
-    const existing = await window.StoryDB.db.characters.toArray();
-    const knownNames = new Set();
-    existing.forEach((c) => {
-      if (c.name) knownNames.add(c.name.toLowerCase().trim());
-      String(c.aliases || '')
-        .split(/[,;]+/)
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean)
-        .forEach((a) => knownNames.add(a));
-    });
+  const existing = await window.StoryDB.db.characters.toArray();
+  const conflicts = window.CodexParser ? window.CodexParser.buildNameConflictSet(existing) : { fullNames: new Set(), uniqueShort: new Set() };
+  const byLowerName = new Map(existing.map((c) => [String(c.name || '').toLowerCase(), c]));
 
+  if (Array.isArray(newChars) && newChars.length > 0) {
     for (const nc of newChars) {
       if (!nc || !nc.name) continue;
       const cleanName = window.CodexParser ? window.CodexParser.capitalizeName(nc.name) : nc.name.trim();
-      if (!cleanName || knownNames.has(cleanName.toLowerCase())) continue;
+      const lower = cleanName.toLowerCase();
+      if (!cleanName) continue;
 
-      const base = window.CodexParser ? window.CodexParser.emptyChar(cleanName) : { name: cleanName };
-      const record = {
-        ...base,
-        name: cleanName,
-        appearance: [nc.gender, nc.age ? `${nc.age} tuổi` : '', nc.appearance].filter(Boolean).join(', '),
-        personality: nc.personality || '',
-        description: nc.personality || nc.appearance || '',
-        speech_style: nc.speech_style || '',
-        misbelief: nc.misbelief || '',
-        thirdRail: nc.thirdRail || '',
-        isMain: nc.isMain === true ? true : null,
-        updatedAt: Date.now()
-      };
-      await window.StoryDB.db.characters.put(record);
-      knownNames.add(cleanName.toLowerCase());
-      addedChars++;
+      if (isFromDigest) {
+        // Nhánh Digest: kiểm tra evidence, danh xưng chung, tăng appearances nếu là NPC cũ
+        const existingRec = byLowerName.get(lower);
+        if (existingRec) {
+          if (existingRec.role === 'npc') {
+            existingRec.appearances = (existingRec.appearances || 1) + 1;
+            existingRec.lastSeenChapter = chapterNumber || existingRec.lastSeenChapter;
+            await window.StoryDB.db.characters.put(existingRec);
+          }
+          continue;
+        }
+        if (window.CodexParser?.isGenericNpcTitle(cleanName)) continue;
+        if (conflicts.fullNames.has(lower) || conflicts.uniqueShort.has(lower)) continue;
+        // Không có evidence khớp trong fullText thì bỏ mục (fail-closed, không đoán).
+        if (!hasValidEvidence(fullText, evidence, nc.name) && !hasValidEvidence(fullText, evidence, cleanName)) continue;
+        const occ = window.CodexParser ? window.CodexParser.countNameInText(fullText, cleanName) : 2;
+        if (occ < 2) continue;
+
+        const npc = window.CodexParser.emptyNpc(cleanName, nc.personality || nc.appearance || '', chapterNumber || 1);
+        await window.StoryDB.db.characters.put(npc);
+        conflicts.fullNames.add(lower);
+        addedChars++;
+      } else {
+        // Nhánh Seed Mode (chapter.js:330, fullText == null): bỏ lọc >=2 lần & evidence, giữ vai khởi tạo
+        if (conflicts.fullNames.has(lower)) continue;
+        const base = window.CodexParser ? window.CodexParser.emptyChar(cleanName) : { name: cleanName };
+        const record = {
+          ...base,
+          name: cleanName,
+          role: nc.role || (nc.isMain === true ? 'protagonist' : 'supporting'),
+          isMain: nc.role === 'protagonist' || nc.isMain === true,
+          appearance: [nc.gender, nc.age ? `${nc.age} tuổi` : '', nc.appearance].filter(Boolean).join(', '),
+          personality: nc.personality || '',
+          description: nc.personality || nc.appearance || '',
+          speech_style: nc.speech_style || '',
+          misbelief: nc.misbelief || '',
+          thirdRail: nc.thirdRail || '',
+          source: 'seed',
+          updatedAt: Date.now()
+        };
+        await window.StoryDB.db.characters.put(record);
+        conflicts.fullNames.add(lower);
+        addedChars++;
+      }
     }
   }
 
   if (Array.isArray(newRules) && newRules.length > 0) {
     const existingRules = await window.StoryDB.db.worldRules.where('type').anyOf('hard_rule', 'soft_lore').toArray();
     const knownRules = new Set(existingRules.map((r) => String(r.content || '').toLowerCase().trim()));
-
     for (const rule of newRules) {
       const clean = String(rule || '').trim();
       if (clean.length < 8 || knownRules.has(clean.toLowerCase())) continue;
-      await window.StoryDB.db.worldRules.add({ type: 'soft_lore', content: clean, updatedAt: Date.now() });
+      if (isFromDigest && !hasValidEvidence(fullText, evidence, rule)) continue;
+      await window.StoryDB.db.worldRules.add({
+        type: 'soft_lore',
+        content: clean,
+        source: isFromDigest ? 'digest' : 'seed',
+        updatedAt: Date.now()
+      });
       knownRules.add(clean.toLowerCase());
       addedRules++;
     }
   }
-
   return { addedChars, addedRules };
 }
+
+async function pruneInactiveNpcs(chapterNumber, activeNpcNames = []) {
+  const MAX_ACTIVE_NPCS = 15;
+  const all = await window.StoryDB.db.characters.toArray();
+  const npcs = all.filter((c) => c.role === 'npc');
+  if (npcs.length <= MAX_ACTIVE_NPCS) return 0;
+
+  const activeSet = new Set((activeNpcNames || []).map((s) => String(s || '').toLowerCase().trim()));
+  const candidates = npcs
+    .filter((n) => (n.appearances || 1) === 1 && chapterNumber - (n.lastSeenChapter || 0) > 5 && !activeSet.has(n.name.toLowerCase()))
+    .sort((a, b) => (a.lastSeenChapter || 0) - (b.lastSeenChapter || 0));
+
+  const toDelete = candidates.slice(0, npcs.length - MAX_ACTIVE_NPCS);
+  if (toDelete.length === 0) return 0;
+
+  const backup = await window.StoryDB.getSetting('pruned_npcs_backup', []);
+  const nextBackup = [...backup, ...toDelete].slice(-20);
+  await window.StoryDB.setSetting('pruned_npcs_backup', nextBackup);
+  await Promise.all(toDelete.map((n) => window.StoryDB.db.characters.delete(n.name)));
+  return toDelete.length;
+}
+
 
 window.StoryMemory = {
   VOICE_HANDBOOK,
@@ -421,5 +551,10 @@ window.StoryMemory = {
   searchL4Chapters,
   buildVoiceHandbook,
   buildVoiceAnchors,
-  harvestFromDigest
+  harvestFromDigest,
+  lookupRecurringNpcs,
+  serializeL2ForPrompt,
+  pruneInactiveNpcs,
+  CLEAR_SENTINEL,
+  mergeCharacterState
 };

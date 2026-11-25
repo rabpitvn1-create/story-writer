@@ -21,6 +21,8 @@ const STRUCTURAL_HEADING_RE =
 function emptyChar(name = '') {
   return {
     name: name.trim(),
+    role: null,
+    source: 'codex',
     code: '',
     aliases: '',
     appearance: '',
@@ -52,8 +54,12 @@ function capitalizeName(raw) {
     .join(' ');
 }
 
+const VALID_ROLES = ['protagonist', 'ally', 'antagonist', 'supporting', 'npc'];
+
 function isMainCharacter(char) {
   if (!char) return false;
+  if (char.role === 'protagonist') return true;
+  if (char.role && char.role !== 'protagonist') return false;
   if (char.isMain === true) return true;
   if (char.isMain === false) return false;
   return Boolean(
@@ -62,6 +68,137 @@ function isMainCharacter(char) {
       /-CHR-/i.test(char.code || '') ||
       String(char.personality || char.description || '').length > 500
   );
+}
+
+function emptyNpc(name, note = '', chapterNumber = 1) {
+  return {
+    name: capitalizeName(name),
+    role: 'npc',
+    isMain: false,
+    note: String(note || '').trim().slice(0, 150),
+    appearances: 1,
+    lastSeenChapter: chapterNumber || 1,
+    source: 'digest'
+  };
+}
+
+// Heuristic 0 token: chỉ gán protagonist cho idx 0 khi DB chưa có protagonist nào
+function guessRoleHeuristic(char, index, hasExistingProtagonist) {
+  const shortText = `${char.aliases || ''} ${char.name || ''}`.toLowerCase();
+  if (/(phản diện|kẻ thù|trùm|boss|ác nhân)/i.test(shortText)) return 'antagonist';
+  if (index === 0 && !hasExistingProtagonist) return 'protagonist';
+  return 'supporting';
+}
+
+// Tùy chọn 1 call utility (chỉ hiện khi >=4 nhân vật có mô tả >30 ký tự; ƯỚC TÍNH ~600-1.000 tok cho 5-10 người theo /3,5)
+async function suggestRolesWithAI(characters) {
+  const items = characters.map((c, i) => ({
+    i,
+    name: c.name,
+    brief: String(c.aliases || c.personality || c.description || '').replace(/\s+/g, ' ').slice(0, 150)
+  }));
+  const raw = await window.RequestQueue.enqueue({
+    lane: 'utility',
+    systemPrompt: 'Phân loại vai trò nhân vật thành JSON thuần: {"roles": {"0": "protagonist|ally|antagonist|supporting"}}. Chỉ đúng 1 protagonist.',
+    messages: [{ role: 'user', content: JSON.stringify(items) }],
+    maxTokens: 800,
+    temperature: 0.2,
+    reasoningEffort: window.UnifiedAdapter?.REASONING_EFFORT?.digest || 'minimal',
+    stream: false
+  });
+  const cleaned = String(raw || '').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+  const parsed = JSON.parse(cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1));
+  return parsed.roles || {};
+}
+
+// Tách nhiều mục trong 1 lần gõ: ưu tiên \n và ';'; dấu '.' CHẶT (chỉ tách khi sau là "Tên ngắn - ...")
+function splitMultiInput(rawText) {
+  const abbrRe = /(?:^|\s)(?:Q|P|TP|Mr|Mrs|Ms|Dr|St|T|Tp)\.$/;
+  const rough = String(rawText || '').split(/[\r\n;]+/);
+  const out = [];
+  for (const seg of rough) {
+    const trimmed = seg.trim();
+    if (!trimmed) continue;
+    // Tách theo ". " chỉ khi vế sau bắt đầu bằng 1-3 từ viết hoa theo sau bởi " - "
+    const parts = trimmed.split(/\.\s+(?=[A-ZÀ-Ỹ][^\-–—]{0,28}\s+[\-–—]\s+)/);
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0 && abbrRe.test(`${parts[i - 1]}.`)) {
+        out[out.length - 1] = `${out[out.length - 1]}. ${parts[i].trim()}`;
+      } else if (parts[i].trim()) {
+        out.push(parts[i].trim());
+      }
+    }
+  }
+  return out;
+}
+
+// Trích danh sách tên món đồ ở đầu dòng trước để không cắt mù inventory_default 2.229 ký tự
+function extractInventorySummary(inventoryText, maxChars = 220) {
+  const raw = String(inventoryText || '').trim();
+  if (!raw) return '';
+  if (raw.length <= maxChars) return raw.replace(/\s+/g, ' ');
+  const lines = raw.split(/\r?\n/).map((l) => l.replace(/^[-*•\d.)\s]+/, '').trim()).filter(Boolean);
+  const itemNames = lines
+    .map((l) => l.split(/[:–—(]/)[0].trim())
+    .filter((s) => s.length >= 2 && s.length <= 45);
+  const joined = [...new Set(itemNames)].join(', ');
+  const pick = joined.length >= 12 ? joined : raw.replace(/\s+/g, ' ');
+  return pick.length <= maxChars ? pick : `${pick.slice(0, maxChars - 1).trim()}…`;
+}
+
+// Lọc danh xưng chung + tập tên cấm trùng (full name + tên riêng duy nhất theo [M3])
+const GENERIC_NPC_RE = /^(lão\s+|ông\s+|bà\s+|anh\s+|chị\s+|tên\s+|gã\s+|người\s+|cô\s+|cậu\s+)?(chủ quán|lính gác|lễ tân|người lạ|người qua đường|dân làng|khách trọ|tài xế|bảo vệ|y tá|bác sĩ|cảnh sát|thương nhân|tiểu nhị|cô gái|chàng trai|ông lão|bà lão|đứa trẻ|kẻ lạ mặt)$/i;
+const VI_COMPOUND_AFTER_CAP = new Set(['bộ', 'thể', 'phần', 'diện', 'quốc', 'cầu', 'tập', 'quyền', 'lực', 'năng', 'thân', 'cảnh', 'vẹn', 'bích']);
+
+function isGenericNpcTitle(name) {
+  return GENERIC_NPC_RE.test(String(name || '').trim());
+}
+
+function buildNameConflictSet(existingChars) {
+  const fullNames = new Set();
+  const tokenCounts = new Map();
+  for (const c of existingChars || []) {
+    if (!c?.name) continue;
+    const lower = c.name.trim().toLowerCase();
+    fullNames.add(lower);
+    String(c.aliases || '').split(/[,;]+/).map((s) => s.trim().toLowerCase()).filter(Boolean).forEach((a) => fullNames.add(a));
+    const tokens = lower.split(/\s+/).filter((t) => t.length >= 2);
+    if (tokens.length >= 2) {
+      const last = tokens[tokens.length - 1];
+      tokenCounts.set(last, (tokenCounts.get(last) || 0) + 1);
+      tokenCounts.set(tokens[0], (tokenCounts.get(tokens[0]) || 0) + 1);
+    }
+  }
+  const uniqueShort = new Set();
+  for (const [tok, cnt] of tokenCounts.entries()) {
+    if (cnt === 1) uniqueShort.add(tok);
+  }
+  return { fullNames, uniqueShort };
+}
+
+// Đếm xuất hiện tên trong fullText áp luật lọc đầu câu tiếng Việt [M3] cho tên 1 từ
+// FIX-B1: bản nháp Gemini cắt ngang giữa hàm — viết nốt phần thân theo đúng luật [M3] đã duyệt:
+// tên 1 từ ở đầu câu mà từ theo sau thuộc danh sách hợp chất phổ biến thì không tính.
+function countNameInText(fullText, name) {
+  const clean = String(name || '').trim();
+  if (!clean || !fullText) return 0;
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const isSingleWord = !/\s/.test(clean);
+  // Tên riêng giữ dạng viết hoa trong văn xuôi nên khớp phân biệt hoa/thường: "toàn" trong "hoàn toàn" không tính.
+  const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'gu');
+  const text = String(fullText);
+  let count = 0;
+  for (const m of text.matchAll(re)) {
+    if (isSingleWord) {
+      const before = text.slice(0, m.index);
+      if (/(^|[.!?…\n]\s*)$/.test(before)) {
+        const nextWord = (text.slice(m.index + clean.length).match(/^\s+([\p{L}]+)/u) || [])[1];
+        if (nextWord && VI_COMPOUND_AFTER_CAP.has(nextWord.toLowerCase())) continue;
+      }
+    }
+    count++;
+  }
+  return count;
 }
 
 // Parser 1 dòng: "Toàn - Nam - 37 tuổi - Tu tiên giả đến từ thế giới tu tiên" (hỗ trợ ' - ' hoặc ',')
@@ -425,5 +562,13 @@ window.CodexParser = {
   parseSingleLineCharacter,
   parseCodexText,
   extractCodexWithLLM,
-  autoSplitDocxCodex
+  autoSplitDocxCodex,
+  emptyNpc,
+  guessRoleHeuristic,
+  suggestRolesWithAI,
+  splitMultiInput,
+  extractInventorySummary,
+  isGenericNpcTitle,
+  buildNameConflictSet,
+  countNameInText
 };

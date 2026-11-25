@@ -33,10 +33,45 @@ async function getStoryPrefsDirective() {
   const allGenres = Array.isArray(prefs.genres) ? [...prefs.genres] : [];
   if (prefs.customGenre) allGenres.push(prefs.customGenre);
   const genreStr = allGenres.length ? allGenres.join(', ') : 'Tự do';
-  return `GU TRUYỆN: Thể loại [${genreStr}]; Kịch tính: ${prefs.drama || 'Trung bình'}; Tỉ lệ nhân vật phụ chết: ${prefs.sideCharDeathRate || 'Trung bình'}; Định hướng kết thúc: ${prefs.ending || 'Kết thúc mở'} (lái dần các biến cố và móc nối về hướng này).`;
+  return `GU TRUYỆN: Thể loại [${genreStr}]; Kịch tính: ${prefs.drama || 'Trung bình'}; Tỉ lệ nhân vật phụ (có hồ sơ) chết: ${prefs.sideCharDeathRate || 'Trung bình'}; Định hướng kết thúc: ${prefs.ending || 'Kết thúc mở'} (lái dần các biến cố và móc nối về hướng này).`;
 }
 
-async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '', onUsage = null, isSeedMode = false) {
+// R2-02: kiểm tra canon sau mỗi lần generate (fail-closed); Seed Mode bỏ qua factsUsed (l1 chỉ có 1 dòng mặc định)
+function verifyOutlineCanon(parsed, l1, l2, isSeedMode = false) {
+  const errors = [];
+  if (window.EndlessManager) {
+    errors.push(...window.EndlessManager.auditOutlineContinuity(parsed, l2));
+  }
+
+  const check = parsed?.canonCheck;
+  if (!check || typeof check !== 'object') {
+    errors.push('Thiếu trường bắt buộc canonCheck trong dàn ý.');
+    return errors;
+  }
+  if (Array.isArray(check.deadMentioned) && check.deadMentioned.length > 0) {
+    errors.push(`Dàn ý tự báo có nhắc nhân vật đã chết: ${check.deadMentioned.join(', ')}.`);
+  }
+  if (Array.isArray(check.lostItemsUsed) && check.lostItemsUsed.length > 0) {
+    errors.push(`Dàn ý tự báo có dùng vật phẩm đã mất: ${check.lostItemsUsed.join(', ')}.`);
+  }
+
+  // factsUsed phải là substring thật của L1 hoặc L2; Seed Mode bỏ qua (l1 mặc định 1 dòng, model dễ lệch vài ký tự)
+  if (!isSeedMode) {
+    const facts = Array.isArray(check.factsUsed) ? check.factsUsed.filter((s) => String(s || '').trim().length >= 8) : [];
+    if (facts.length === 0) {
+      errors.push('canonCheck.factsUsed phải có ít nhất 1 trích đoạn nguyên văn (>=8 ký tự) từ L1 hoặc L2.');
+    } else {
+      const corpus = `${String(l1 || '')}\n${JSON.stringify(l2 || {})}`.replace(/\s+/g, ' ').toLowerCase();
+      const hasRealFact = facts.some((f) => corpus.includes(String(f).replace(/\s+/g, ' ').trim().toLowerCase()));
+      if (!hasRealFact) {
+        errors.push('canonCheck.factsUsed không khớp nguyên văn với L1 hoặc L2 (nghi ngờ bịa canon).');
+      }
+    }
+  }
+  return errors;
+}
+
+async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '', onUsage = null, isSeedMode = false, auditRound = 0) {
   const l4Text = l4Hits.map((h) => `[Chương ${h.chapterNumber}]: ${h.snippet}`).join('\n');
   const recentMotifsText = creativity?.recentMotifs?.length
     ? creativity.recentMotifs.map((m) => `${m.conflict}/${m.environment}`).join(', ')
@@ -47,6 +82,8 @@ async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditF
   "seededCharacters": [{ "name": "", "age": "", "gender": "", "appearance": "", "personality": "", "misbelief": "niềm tin sai lầm cốt lõi", "thirdRail": "chủ đề cấm kỵ/dễ nổ", "speech_style": "1 dòng giọng nói riêng biệt" }],
   "seededRules": ["luật thế giới nền ngắn gọn"]\n`
     : '';
+  const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
+
   const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng 5.000–6.000 từ tiếng Việt) và tự kiểm tra L1/L2.
 HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${creativity?.branchLabel || ''})
 TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
@@ -55,6 +92,7 @@ ${userDirection ? `GỢI Ý CỦA NGƯỜI VIẾT (ưu tiên cao nhất, dàn ý
 ${prefsDirective ? `${prefsDirective}\n` : ''}
 ${auditFixNote ? `SỬA LỖI VI PHẠM CANON TRƯỚC ĐÓ: ${auditFixNote}` : ''}
 ${seedBlock}
+Được phép tạo NPC quần chúng cho bối cảnh sống động nhưng cấm trùng tên với nhân vật đã có.
 Trả về JSON thuần:
 {
   "title": "Tên chương ngắn",
@@ -64,9 +102,14 @@ Trả về JSON thuần:
     { "index": 1, "goal": "Mở đầu & khám phá", "beats": "Chi tiết" },
     { "index": 2, "goal": "Biến cố & cao trào", "beats": "Chi tiết" },
     { "index": 3, "goal": "Dư âm & móc nối", "beats": "Chi tiết" }
-  ]
+  ],
+  "canonCheck": {
+    "deadMentioned": [],
+    "lostItemsUsed": [],
+    "factsUsed": ["trích nguyên văn <=100 ký tự từ L1 hoặc L2 làm căn cứ cho dàn ý"]
+  }
 }
-L2: ${JSON.stringify(l2)}
+L2: ${l2Str}
 L3: ${l3.arcsText}\n${l3.recentText}
 L4: ${l4Text || 'Không có'}`;
 
@@ -78,6 +121,7 @@ L4: ${l4Text || 'Không có'}`;
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 1800,
       temperature: 0.7,
+      reasoningEffort: window.UnifiedAdapter?.REASONING_EFFORT?.outline || 'low',
       stream: false,
       signal,
       onUsage
@@ -94,12 +138,14 @@ L4: ${l4Text || 'Không có'}`;
       if (attempt === 1) throw new Error('Dàn ý trả về không phải JSON hợp lệ, bấm Viết chương tiếp để thử lại.');
       continue;
     }
-    // Kiểm tra liên tục trước khi viết (chỉ gọi lại tối đa 1 lần nếu vi phạm)
-    if (!auditFixNote && window.EndlessManager) {
-      const violations = window.EndlessManager.auditOutlineContinuity(outline, l2);
-      if (violations.length > 0) {
-        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective, onUsage, isSeedMode);
+    // R2-02: kiểm tra canon sau MỖI lần generate (kể cả lần sửa), tối đa 2 vòng rồi fail-closed
+    const MAX_AUDIT_ROUNDS = 2;
+    const violations = verifyOutlineCanon(outline, l1, l2, isSeedMode);
+    if (violations.length > 0) {
+      if (auditRound < MAX_AUDIT_ROUNDS) {
+        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective, onUsage, isSeedMode, auditRound + 1);
       }
+      throw new Error(`Dàn ý vẫn vi phạm canon sau ${MAX_AUDIT_ROUNDS} lần tự kiểm tra (${violations[0]}). Vui lòng thử bấm viết lại hoặc kiểm tra sổ cái.`);
     }
     return outline;
   }
@@ -108,11 +154,13 @@ L4: ${l4Text || 'Không có'}`;
 async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '', onUsage = null, mainChar = null }) {
   const systemPrompt = `${l1}\n\n${window.StoryMemory.buildVoiceHandbook(mainChar)}\n\n${window.StoryMemory.buildVoiceAnchors(mainChar)}`;
   const isLast = scene.index === totalScenes;
+  const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
+  const recurringNpcText = await window.StoryMemory.lookupRecurringNpcs(`${scene.goal || ''} ${scene.beats || ''}`);
 
   const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 1.800–2.000 từ tiếng Việt).
 Mục tiêu cảnh: ${scene.goal}
 ${prefsDirective ? `${prefsDirective}\n` : ''}Chi tiết: ${scene.beats}
-Trạng thái hiện tại (L2): ${JSON.stringify(l2)}
+Trạng thái hiện tại (L2): ${l2Str}${recurringNpcText ? `\n${recurringNpcText}` : ''}
 Tóm tắt gần nhất (L3): ${l3.recentText || 'Chương mở đầu'}
 ${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
 ${linterNotes.length ? `LƯU Ý SỬA PHONG CÁCH:\n- ${linterNotes.join('\n- ')}` : ''}
@@ -124,6 +172,7 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens: 4096,
     temperature: 0.85,
+    reasoningEffort: window.UnifiedAdapter?.REASONING_EFFORT?.scene || 'low',
     stream: true,
     onToken: (chunk, full) => {
       if (onProgress) onProgress(window.StoryMemory.countWords(full));
@@ -149,6 +198,7 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
       ],
       maxTokens: 2500,
       temperature: 0.85,
+      reasoningEffort: window.UnifiedAdapter?.REASONING_EFFORT?.scene || 'low',
       stream: true,
       onToken: (chunk, fullExtra) => {
         if (onProgress) onProgress(words + window.StoryMemory.countWords(fullExtra));
@@ -167,7 +217,21 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
 }
 
 async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null) {
-  const excerpt = `${fullText.slice(0, 6000)}\n...\n${fullText.slice(-6000)}`;
+  const midStart = Math.max(0, Math.floor((fullText.length - 4000) / 2));
+  const excerpt =
+    fullText.length <= 12000
+      ? fullText
+      : `${fullText.slice(0, 4000)}\n...\n${fullText.slice(midStart, midStart + 4000)}\n...\n${fullText.slice(-4000)}`;
+  const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
+
+  // D-01: mẫu characterStates liệt kê MỌI nhân vật có hồ sơ (role !== 'npc') để digest không bỏ sót key
+  const allCharsForDigest = await window.StoryDB.db.characters.toArray();
+  const trackedChars = allCharsForDigest.filter((c) => c.role !== 'npc');
+  const stateTemplateObj = {};
+  (trackedChars.length ? trackedChars : [{ name: Object.keys(l2.characterStates || {})[0] || 'Nhân vật chính' }]).forEach((c) => {
+    stateTemplateObj[c.name] = { level: '', injuries: '', pickedUpItems: '' };
+  });
+
   const prompt = `Đọc Chương ${chapterNumber} dưới đây và trả về 1 JSON duy nhất:
 {
   "summary": "Tóm tắt sự kiện chính trong 80-130 từ",
@@ -175,14 +239,16 @@ async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null
   "newDeadCharacters": [],
   "newLostItems": [],
   "openHooks": ["Danh sách tối đa 5 lời hứa/bí ẩn đang mở"],
-  "newCharacters": [],
-  "newWorldRules": [],
-  "characterStates": {
-    "${Object.keys(l2.characterStates || {})[0] || 'Nhân vật chính'}": { "level": "", "injuries": "", "inventory": "" }
-  },
+  "activeNpcNames": ["tối đa 2-3 NPC có vai trò mở cần giữ"],
+  "newCharacters": [{ "name": "", "appearance": "", "personality": "" }],
+  "newWorldRules": ["luật/bối cảnh mới thực sự xác lập, KHÔNG ghi đồ bịa"],
+  "evidence": { "<tên nhân vật hoặc nguyên văn luật mới>": "<trích đoạn nguyên văn <=120 ký tự từ chương>" },
+  "characterStates": ${JSON.stringify(stateTemplateObj)},
   "tension_level": 5
 }
-Sổ cái cũ: ${JSON.stringify(l2)}
+QUY TẮC TRẠNG THÁI: Để "" hoặc null nghĩa là KHÔNG ĐỔI (giữ nguyên cũ). Đồ đã mất thì ghi vào newLostItems, không để inventory rỗng. Chỉ khi muốn xóa sạch thương tích/trạng thái đã hết mới ghi "[XÓA]".
+KHÔNG đưa NPC quần chúng vào characterStates.
+Sổ cái cũ: ${l2Str}
 Nội dung chương:\n${excerpt}`;
 
   let data = null;
@@ -193,6 +259,7 @@ Nội dung chương:\n${excerpt}`;
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 1800,
       temperature: 0.2,
+      reasoningEffort: window.UnifiedAdapter?.REASONING_EFFORT?.digest || 'minimal',
       stream: false,
       signal,
       onUsage
@@ -233,17 +300,32 @@ Nội dung chương:\n${excerpt}`;
   const nextTension = Math.min(10, Math.max(1, Number(data.tension_level) || 5));
   const nextHistory = [...(l2.tensionHistory || []), nextTension].slice(-6);
 
+  // D-01: merge qua mergeCharacterState ("" = giữ nguyên, "[XÓA]" = xóa thật); chỉ giữ key thuộc nhân vật có trong DB và role !== 'npc'
+  const validStateNames = new Set(trackedChars.map((c) => c.name));
+  const mergedStates = { ...(l2.characterStates || {}) };
+  for (const [k, v] of Object.entries(data.characterStates || {})) {
+    if (!validStateNames.has(k)) continue;
+    mergedStates[k] = window.StoryMemory.mergeCharacterState(mergedStates[k], v);
+  }
+
   const nextLedger = {
     location: data.location || l2.location,
     deadCharacters: [...new Set([...(l2.deadCharacters || []), ...(data.newDeadCharacters || [])])],
     lostItems: [...new Set([...(l2.lostItems || []), ...(data.newLostItems || [])])],
     openHooks: Array.isArray(data.openHooks) ? data.openHooks : l2.openHooks,
     relationships: l2.relationships || {},
-    characterStates: { ...(l2.characterStates || {}), ...(data.characterStates || {}) },
+    characterStates: mergedStates,
     tensionHistory: nextHistory
   };
   await window.StoryMemory.saveL2Ledger(nextLedger);
-  await window.StoryMemory.harvestFromDigest(data.newCharacters || [], data.newWorldRules || []);
+  await window.StoryMemory.harvestFromDigest(
+    data.newCharacters || [],
+    data.newWorldRules || [],
+    fullText,
+    chapterNumber,
+    data.evidence || null
+  );
+  await window.StoryMemory.pruneInactiveNpcs(chapterNumber, data.activeNpcNames || []);
 }
 
 async function writeNextChapter({
@@ -325,7 +407,8 @@ async function writeNextChapter({
       if (Array.isArray(outline.seededCharacters) && outline.seededCharacters.length > 0) {
         const seeded = outline.seededCharacters.map((c, idx) => ({
           ...c,
-          isMain: idx === 0 ? true : null
+          role: idx === 0 ? 'protagonist' : 'supporting',
+          isMain: idx === 0
         }));
         await window.StoryMemory.harvestFromDigest(seeded, []);
       }

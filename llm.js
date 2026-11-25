@@ -1,3 +1,11 @@
+// Cấu hình reasoning_effort tập trung (sửa 1 dòng là đổi được):
+// Ghi chú audit: có thể A/B thử scene: 'medium' nếu cần tăng độ sâu văn chương.
+const REASONING_EFFORT = {
+  outline: 'low',
+  scene: 'low',
+  digest: 'minimal'
+};
+
 class RateLimitError extends Error {
   constructor(status, message, retryAfterSec = null) {
     super(message);
@@ -47,10 +55,21 @@ async function readSSE(response, onLine) {
   if (buffer.trim()) onLine(buffer.trim());
 }
 
-async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, onUsage, signal }) {
+async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, reasoningEffort, onToken, onUsage, signal }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
+
+  const payload = {
+    model,
+    messages: fullMessages,
+    max_tokens: maxTokens,
+    temperature,
+    stream,
+    // chỉ gửi stream_options khi stream thật — có endpoint 400 khi stream:false kèm nó
+    ...(stream ? { stream_options: { include_usage: true } } : {})
+  };
+  if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
 
   const res = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
@@ -59,15 +78,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`
     },
-    body: JSON.stringify({
-      model,
-      messages: fullMessages,
-      max_tokens: maxTokens,
-      temperature,
-      stream,
-      // chỉ gửi stream_options khi stream thật — có endpoint 400 khi stream:false kèm nó
-      ...(stream ? { stream_options: { include_usage: true } } : {})
-    })
+    body: JSON.stringify(payload)
   });
 
   if (!res.ok) {
@@ -119,7 +130,6 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
       system: systemPrompt || undefined,
       messages,
       max_tokens: maxTokens,
-      temperature,
       stream
     })
   });
@@ -165,16 +175,25 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
 
 // Gọi qua proxy có sẵn của anh (Render): proxy giữ key ở server nên app không cần key.
 // Proxy không hỗ trợ streaming — luôn gọi không-stream và đọc full JSON trả về.
-async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, signal, onToken, onUsage }) {
+async function callProxy({ baseUrl, provider, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, reasoningEffort, signal, onToken, onUsage }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
+
+  const body = {
+    model,
+    messages: fullMessages,
+    max_tokens: maxTokens,
+    temperature
+  };
+  // shortcut: chỉ gửi reasoning_effort sang proxy Gemini (đã xác minh forward server.js:37-38); phản ứng của proxy Haiku chưa kiểm chứng nên không gửi.
+  if (reasoningEffort && provider === 'gemini') body.reasoning_effort = reasoningEffort;
 
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat`, {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages: fullMessages, max_tokens: maxTokens, temperature })
+    body: JSON.stringify(body)
   });
 
   if (!res.ok) {
@@ -204,5 +223,6 @@ async function callLLM(params) {
 
 window.UnifiedAdapter = {
   RateLimitError,
-  callLLM
+  callLLM,
+  REASONING_EFFORT
 };

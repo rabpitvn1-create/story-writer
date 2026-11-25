@@ -66,7 +66,7 @@ async function incrementBudget(usage = null) {
   return next;
 }
 
-async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, stream, onToken, onUsage, signal }) {
+async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal }) {
   const apiConfig = await window.StoryDB.getSetting('apiConfig', {});
   const freeOnly = Boolean(apiConfig.freeOnlyMode);
 
@@ -126,6 +126,7 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
         messages,
         maxTokens,
         temperature,
+        reasoningEffort,
         stream,
         onToken,
         onUsage: (u) => {
