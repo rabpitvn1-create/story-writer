@@ -36,7 +36,7 @@ async function getStoryPrefsDirective() {
   return `GU TRUYỆN: Thể loại [${genreStr}]; Kịch tính: ${prefs.drama || 'Trung bình'}; Tỉ lệ nhân vật phụ chết: ${prefs.sideCharDeathRate || 'Trung bình'}; Định hướng kết thúc: ${prefs.ending || 'Kết thúc mở'} (lái dần các biến cố và móc nối về hướng này).`;
 }
 
-async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '') {
+async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '', onUsage = null) {
   const l4Text = l4Hits.map((h) => `[Chương ${h.chapterNumber}]: ${h.snippet}`).join('\n');
   const recentMotifsText = creativity?.recentMotifs?.length
     ? creativity.recentMotifs.map((m) => `${m.conflict}/${m.environment}`).join(', ')
@@ -74,7 +74,8 @@ L4: ${l4Text || 'Không có'}`;
       maxTokens: 1800,
       temperature: 0.7,
       stream: false,
-      signal
+      signal,
+      onUsage
     });
 
     let outline = null;
@@ -92,14 +93,14 @@ L4: ${l4Text || 'Không có'}`;
     if (!auditFixNote && window.EndlessManager) {
       const violations = window.EndlessManager.auditOutlineContinuity(outline, l2);
       if (violations.length > 0) {
-        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective);
+        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection, prefsDirective, onUsage);
       }
     }
     return outline;
   }
 }
 
-async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '' }) {
+async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '', onUsage = null }) {
   const systemPrompt = `${l1}\n\n${window.StoryMemory.VOICE_HANDBOOK}\n\n${window.StoryMemory.VOICE_ANCHORS}`;
   const isLast = scene.index === totalScenes;
 
@@ -123,7 +124,8 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
       if (onProgress) onProgress(window.StoryMemory.countWords(full));
       if (onChunk && chunk) onChunk(chunk, full);
     },
-    signal
+    signal,
+    onUsage
   });
 
   // Cổng kiểm số từ: thiếu dưới 1.700 từ thì viết nối tiếp cho đủ ~1.850 từ (3 cảnh x 1.700 = 5.100)
@@ -150,7 +152,8 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
           firstExtraChunk = false;
         }
       },
-      signal
+      signal,
+      onUsage
     });
     text = `${text.trim()}\n\n${extra.trim()}`;
   }
@@ -158,7 +161,7 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
   return trimToWordLimit(text, 2250);
 }
 
-async function digestChapter(chapterNumber, fullText, l2, signal) {
+async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null) {
   const excerpt = `${fullText.slice(0, 6000)}\n...\n${fullText.slice(-6000)}`;
   const prompt = `Đọc Chương ${chapterNumber} dưới đây và trả về 1 JSON duy nhất:
 {
@@ -184,7 +187,8 @@ Nội dung chương:\n${excerpt}`;
       maxTokens: 1500,
       temperature: 0.2,
       stream: false,
-      signal
+      signal,
+      onUsage
     });
 
     try {
@@ -238,6 +242,7 @@ async function writeNextChapter({
   onStatus,
   onChapterReady,
   onChapterStart,
+  onOutlineReady,
   onSceneStream,
   onSceneDone,
   onAborted,
@@ -253,6 +258,21 @@ async function writeNextChapter({
   let currentSceneNum = 1;
   let totalScenesCount = 3;
   let outline = null;
+  const chapterUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    thinkingTokens: 0,
+    totalTokens: 0,
+    calls: 0
+  };
+  const trackUsage = (u) => {
+    chapterUsage.calls += 1;
+    if (!u) return;
+    chapterUsage.promptTokens += u.promptTokens || 0;
+    chapterUsage.completionTokens += u.completionTokens || 0;
+    chapterUsage.thinkingTokens += u.thinkingTokens || 0;
+    chapterUsage.totalTokens += u.totalTokens || 0;
+  };
 
   try {
     const draft = await window.StoryDB.getSetting('chapter_draft', null);
@@ -282,8 +302,12 @@ async function writeNextChapter({
         : null;
       onStatus(`Chương ${chapterNumber}: Đang lập dàn ý (Hướng: ${creativity?.branchLabel || 'Tự do'})...`);
       const outlineL1 = await window.StoryMemory.getL1HardCanon(outlineQuery, true);
-      outline = await generateOutline(chapterNumber, outlineL1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective);
+      outline = await generateOutline(chapterNumber, outlineL1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective, trackUsage);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
+    }
+
+    if (onOutlineReady && outline?.title) {
+      onOutlineReady(chapterNumber, outline.title);
     }
 
     totalScenesCount = outline.scenes.length;
@@ -311,7 +335,8 @@ async function writeNextChapter({
         onProgress: (w) => onStatus(`Chương ${chapterNumber}: Cảnh ${i + 1}/${totalScenesCount} (${w} từ)...`),
         onChunk: (chunk, full) => {
           if (onSceneStream) onSceneStream(chunk, full, i);
-        }
+        },
+        onUsage: trackUsage
       });
 
       // Cảnh rỗng thì không lưu — lần chạy sau sẽ viết lại đúng cảnh đó
@@ -336,12 +361,13 @@ async function writeNextChapter({
       text: fullText,
       blocks: parseTextToBlocks(fullText),
       wordCount: window.StoryMemory.countWords(fullText),
+      usage: chapterUsage,
       createdAt: Date.now()
     };
 
     await window.StoryDB.db.chapters.put(chapterRecord);
     onStatus(`Chương ${chapterNumber}: Đang tóm tắt & cập nhật bộ nhớ 4 tầng...`);
-    await digestChapter(chapterNumber, fullText, l2, signal);
+    await digestChapter(chapterNumber, fullText, l2, signal, trackUsage);
     if (window.EndlessManager && outline?.motif) {
       await window.EndlessManager.recordChapterMotif(outline.motif);
     }

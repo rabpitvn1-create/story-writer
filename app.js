@@ -354,6 +354,14 @@ function renderChapter(chapter) {
   document.getElementById('chapter-title').textContent = `CHAPTER ${chapter.number}`;
   const container = document.getElementById('story-content');
   container.innerHTML = '';
+  if (chapter.title && chapter.title !== `CHAPTER ${chapter.number}`) {
+    const sub = document.createElement('h2');
+    sub.className = 'chapter-subtitle';
+    sub.textContent = chapter.title;
+    container.appendChild(sub);
+  }
+  const gotoNextBtn = document.getElementById('goto-next-chapter-btn');
+  if (gotoNextBtn) gotoNextBtn.textContent = `Đọc tiếp Chương ${chapter.number + 1} →`;
 
   chapter.blocks.forEach((block) => {
     const el = createBlockElement(block);
@@ -363,9 +371,9 @@ function renderChapter(chapter) {
 
 // Đọc dần khi đang viết (streaming/typewriter) — chữ hiện dần như tin nhắn đang gõ
 // HẰNG SỐ TỐC ĐỘ NHẢ CHỮ DUY NHẤT (từ/phút) — chỉnh ở đây để nhanh/chậm hơn:
-// 1300 từ/phút ≈ 2 từ mỗi 92ms (nhịp chậm rãi, đằm, giống Gemini đang gõ trả lời)
-const TYPEWRITER_SPEED_WPM = 1300;
-const TYPEWRITER_WORDS_PER_TICK = 2;
+// 300 từ/phút ≈ 1 từ mỗi 200ms (chờ thử thực tế 250 / 320 / 420 trên điện thoại thật)
+const TYPEWRITER_SPEED_WPM = 300; // Chờ thử thực tế 250 / 320 / 420 trên điện thoại thật
+const TYPEWRITER_WORDS_PER_TICK = 1;
 const TYPEWRITER_TICK_MS = Math.max(40, Math.round((TYPEWRITER_WORDS_PER_TICK * 60000) / TYPEWRITER_SPEED_WPM));
 
 // Tái dùng chung cho cả renderChapter và StreamRenderer -> hiển thị giống hệt 100%
@@ -622,6 +630,18 @@ const StreamRenderer = {
     }
     this.cleanupUI();
   },
+
+setChapterSubtitle(title) {
+  const container = document.getElementById('story-content');
+  if (!container || !title) return;
+  let sub = container.querySelector('.chapter-subtitle');
+  if (!sub) {
+    sub = document.createElement('h2');
+    sub.className = 'chapter-subtitle';
+    container.prepend(sub);
+  }
+  sub.textContent = title;
+},
 
   finishChapter(chapterRecord) {
     this.flushAll();
@@ -962,6 +982,7 @@ function setupEvents(settings) {
   const importModal = document.getElementById('import-codex-modal');
   const codexModal = document.getElementById('codex-modal');
   const setupModal = document.getElementById('setup-modal');
+  const tocModal = document.getElementById('toc-modal');
 
   document.getElementById('settings-btn').addEventListener('click', () => {
     settingsModal.classList.remove('hidden');
@@ -1009,7 +1030,7 @@ function setupEvents(settings) {
     });
   });
 
-  [settingsModal, importModal, codexModal, setupModal].forEach((backdrop) => {
+  [settingsModal, importModal, codexModal, setupModal, tocModal].forEach((backdrop) => {
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) backdrop.classList.add('hidden');
     });
@@ -1193,6 +1214,9 @@ function setupEvents(settings) {
       onChapterStart: (chapterNumber, existingScenes) => {
         StreamRenderer.start(chapterNumber, existingScenes);
       },
+      onOutlineReady: (_chNum, title) => {
+        StreamRenderer.setChapterSubtitle(title);
+      },
       onSceneStream: (chunk) => {
         StreamRenderer.pushChunk(chunk);
       },
@@ -1269,6 +1293,9 @@ function setupEvents(settings) {
       onChapterStart: (chapterNumber, existingScenes) => {
         StreamRenderer.start(chapterNumber, existingScenes);
       },
+      onOutlineReady: (_chNum, title) => {
+        StreamRenderer.setChapterSubtitle(title);
+      },
       onSceneStream: (chunk) => {
         StreamRenderer.pushChunk(chunk);
       },
@@ -1309,6 +1336,25 @@ function setupEvents(settings) {
     window.EndlessManager.exportCurrentChapterMd(currentChapterNumber);
   });
 
+  // Nút "Bắt đầu truyện mới" (nhắc sao lưu trước khi xóa truyện cũ — single-story)
+  document.getElementById('new-story-btn')?.addEventListener('click', async () => {
+    const ok = confirm(
+      'Bạn đã sao lưu/xuất truyện hiện tại chưa?\nBấm OK để xóa các chương và trạng thái truyện cũ để bắt đầu truyện mới (giữ nguyên cài đặt và API key).'
+    );
+    if (!ok) return;
+
+    await Promise.all([
+      window.StoryDB.db.chapters.clear(),
+      window.StoryDB.db.summaries.clear(),
+      window.StoryDB.db.ledger.clear(),
+      window.StoryDB.setSetting('chapter_draft', null),
+      window.StoryDB.setSetting('recent_motifs', []),
+      window.StoryDB.setSetting('checkpoint', null)
+    ]);
+    settingsModal.classList.add('hidden');
+    await loadAndRenderLatestChapter();
+  });
+
   // Cuối chương: chuyển chương + gợi ý chương mới
   document.getElementById('goto-next-chapter-btn').addEventListener('click', async () => {
     let next = null;
@@ -1319,6 +1365,30 @@ function setupEvents(settings) {
     }
     if (next) openChapterByNumber(currentChapterNumber + 1);
     else await startWriting();
+  });
+
+  // Chạm CHAPTER X -> mở Mục lục nhảy chương
+  document.getElementById('chapter-title')?.addEventListener('click', async () => {
+    const chapters = await window.StoryDB.db.chapters.orderBy('number').toArray();
+    const listEl = document.getElementById('toc-list');
+    listEl.innerHTML = '';
+    if (chapters.length === 0) {
+      listEl.innerHTML = '<p class="docx-status">Chưa có chương nào được lưu.</p>';
+    } else {
+      chapters.forEach((ch) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `toc-item${ch.number === currentChapterNumber ? ' active' : ''}`;
+        const tok = ch.usage?.totalTokens ? ` • ${ch.usage.totalTokens.toLocaleString('vi-VN')} tok` : '';
+        btn.innerHTML = `<span>CHAPTER ${ch.number}${ch.title ? ` — ${ch.title}` : ''}</span><span class="toc-meta">${ch.wordCount || 0} từ${tok}</span>`;
+        btn.addEventListener('click', async () => {
+          tocModal.classList.add('hidden');
+          await openChapterByNumber(ch.number);
+        });
+        listEl.appendChild(btn);
+      });
+    }
+    tocModal.classList.remove('hidden');
   });
 
   document.getElementById('suggest-next-btn').addEventListener('click', () => {

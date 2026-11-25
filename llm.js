@@ -7,6 +7,18 @@ class RateLimitError extends Error {
   }
 }
 
+function normalizeUsage(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const promptTokens = Number(raw.prompt_tokens ?? raw.input_tokens ?? raw.promptTokenCount ?? 0) || 0;
+  const completionTokens = Number(raw.completion_tokens ?? raw.output_tokens ?? raw.candidatesTokenCount ?? 0) || 0;
+  const thinkingTokens = Number(
+    raw.completion_tokens_details?.reasoning_tokens ?? raw.thoughtsTokenCount ?? raw.thinking_tokens ?? 0
+  ) || 0;
+  const totalTokens = Number(raw.total_tokens ?? raw.totalTokenCount ?? (promptTokens + completionTokens + thinkingTokens)) || 0;
+  if (totalTokens === 0 && promptTokens === 0 && completionTokens === 0) return null;
+  return { promptTokens, completionTokens, thinkingTokens, totalTokens };
+}
+
 function parseRetryAfter(headers) {
   const raw = headers.get('retry-after');
   if (!raw) return null;
@@ -35,7 +47,7 @@ async function readSSE(response, onLine) {
   if (buffer.trim()) onLine(buffer.trim());
 }
 
-async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, signal }) {
+async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, onUsage, signal }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
@@ -52,7 +64,9 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
       messages: fullMessages,
       max_tokens: maxTokens,
       temperature,
-      stream
+      stream,
+      // chỉ gửi stream_options khi stream thật — có endpoint 400 khi stream:false kèm nó
+      ...(stream ? { stream_options: { include_usage: true } } : {})
     })
   });
 
@@ -66,6 +80,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
 
   if (!stream) {
     const data = await res.json();
+    if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
     return data.choices?.[0]?.message?.content || '';
   }
 
@@ -76,6 +91,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
     if (payload === '[DONE]') return;
     try {
       const parsed = JSON.parse(payload);
+      if (onUsage && parsed.usage) onUsage(normalizeUsage(parsed.usage));
       const chunk = parsed.choices?.[0]?.delta?.content || '';
       if (chunk) {
         fullText += chunk;
@@ -88,7 +104,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
   return fullText;
 }
 
-async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, signal }) {
+async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, onUsage, signal }) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     signal,
@@ -118,15 +134,21 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
 
   if (!stream) {
     const data = await res.json();
+    if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
     return data.content?.[0]?.text || '';
   }
 
   let fullText = '';
+  let claudeIn = 0;
   await readSSE(res, (line) => {
     if (!line.startsWith('data:')) return;
     const payload = line.slice(5).trim();
     try {
       const parsed = JSON.parse(payload);
+      if (parsed.type === 'message_start' && parsed.message?.usage) claudeIn = parsed.message.usage.input_tokens || 0;
+      if (parsed.type === 'message_delta' && parsed.usage && onUsage) {
+        onUsage(normalizeUsage({ input_tokens: claudeIn, output_tokens: parsed.usage.output_tokens || 0 }));
+      }
       if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
         const chunk = parsed.delta.text || '';
         if (chunk) {
@@ -143,7 +165,7 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
 
 // Gọi qua proxy có sẵn của anh (Render): proxy giữ key ở server nên app không cần key.
 // Proxy không hỗ trợ streaming — luôn gọi không-stream và đọc full JSON trả về.
-async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, signal, onToken }) {
+async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, signal, onToken, onUsage }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
@@ -166,6 +188,7 @@ async function callProxy({ baseUrl, model, systemPrompt, messages, maxTokens = 4
   }
 
   const data = await res.json();
+  if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
   const content = data.choices?.[0]?.message?.content || '';
   // Proxy không stream: trả cả cục một lần, nhưng vẫn bắn onToken 1 lần để
   // luồng đọc dần (typewriter) chạy được như với key trực tiếp.

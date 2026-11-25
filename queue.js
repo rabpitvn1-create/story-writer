@@ -1,7 +1,16 @@
 const MIN_GAP_MS = 5500; // Khoảng nghỉ 5.5 giây giữa các lần gọi
 const BACKOFF_STEPS_SEC = [15, 30, 60, 120];
 
-let lastCallFinishedAt = 0;
+const lastCallByBucket = new Map();
+const TRANSIENT_RETRY_SEC = [5, 10];
+const PROXY_429_BACKOFF_SEC = [15, 30, 60];
+
+function isTransientNetworkError(err) {
+  if (!err || err.name === 'AbortError') return false;
+  if (err.status === 502 || err.status === 504) return true;
+  if (err instanceof TypeError) return true; // Failed to fetch / RemoteDisconnected
+  return /failed to fetch|network|disconnected|timeout|502|504/i.test(String(err.message || ''));
+}
 let queueChain = Promise.resolve();
 let statusListener = null;
 
@@ -39,18 +48,25 @@ async function getBudgetState() {
   const apiConfig = await window.StoryDB.getSetting('apiConfig', { dailyCap: 100 });
   const saved = await window.StoryDB.getSetting('dailyBudget', { date: todayKey(), used: 0 });
   const current = saved.date === todayKey() ? saved : { date: todayKey(), used: 0 };
-  return { used: current.used, cap: Number(apiConfig.dailyCap) || 100, date: current.date };
+  return { used: current.used, cap: Number(apiConfig.dailyCap) || 100, date: current.date, promptTokens: current.promptTokens || 0, completionTokens: current.completionTokens || 0, thinkingTokens: current.thinkingTokens || 0, totalTokens: current.totalTokens || 0 };
 }
 
-async function incrementBudget() {
+async function incrementBudget(usage = null) {
   const state = await getBudgetState();
-  const next = { date: state.date, used: state.used + 1 };
+  const next = {
+    date: state.date,
+    used: state.used + 1,
+    promptTokens: (state.promptTokens || 0) + (usage?.promptTokens || 0),
+    completionTokens: (state.completionTokens || 0) + (usage?.completionTokens || 0),
+    thinkingTokens: (state.thinkingTokens || 0) + (usage?.thinkingTokens || 0),
+    totalTokens: (state.totalTokens || 0) + (usage?.totalTokens || 0)
+  };
   await window.StoryDB.setSetting('dailyBudget', next);
-  notifyStatus({ type: 'budget', used: next.used, cap: state.cap });
+  notifyStatus({ type: 'budget', used: next.used, cap: state.cap, totalTokens: next.totalTokens });
   return next;
 }
 
-async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, stream, onToken, signal }) {
+async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, stream, onToken, onUsage, signal }) {
   const apiConfig = await window.StoryDB.getSetting('apiConfig', {});
   const freeOnly = Boolean(apiConfig.freeOnlyMode);
 
@@ -61,12 +77,8 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
     throw new Error(`Đã đạt giới hạn ngày (${budget.used}/${budget.cap} calls).`);
   }
 
-  // Đảm bảo khoảng nghỉ 5.5 giây giữa các lần gọi
-  const elapsed = Date.now() - lastCallFinishedAt;
-  if (lastCallFinishedAt > 0 && elapsed < MIN_GAP_MS) {
-    await sleep(MIN_GAP_MS - elapsed, signal);
-  }
-
+  let transientRetries = 0;
+  let proxy429Retries = 0;
   let rpmRetriedForKeyId = null;
   let backoffIndex = 0;
 
@@ -96,6 +108,14 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
           ? apiConfig.geminiWriterModel || 'gemini-3.6-flash'
           : apiConfig.geminiUtilityModel || 'gemini-3.5-flash-lite');
 
+    const bucketKey = `${keyObj.provider}:${keyObj.id || 'proxy'}:${model}`;
+    const lastAt = lastCallByBucket.get(bucketKey) || 0;
+    const elapsed = Date.now() - lastAt;
+    if (lastAt > 0 && elapsed < MIN_GAP_MS) {
+      await sleep(MIN_GAP_MS - elapsed, signal);
+    }
+
+    let callUsage = null;
     try {
       const result = await window.UnifiedAdapter.callLLM({
         provider: keyObj.provider,
@@ -108,14 +128,27 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
         temperature,
         stream,
         onToken,
+        onUsage: (u) => {
+          if (!u) return;
+          callUsage = u;
+          if (onUsage) onUsage(u);
+        },
         signal
       });
-      lastCallFinishedAt = Date.now();
+      lastCallByBucket.set(bucketKey, Date.now());
       await window.KeyPoolManager.recordKeySuccess(keyObj.id);
-      await incrementBudget();
+      await incrementBudget(callUsage);
       return result;
     } catch (err) {
       if (err.name === 'AbortError') throw err;
+
+      // Mạng chập chờn (rớt kết nối/502/504): thử lại tối đa 2 lần, nghỉ 5s rồi 10s
+      if (isTransientNetworkError(err) && transientRetries < TRANSIENT_RETRY_SEC.length) {
+        const waitSec = TRANSIENT_RETRY_SEC[transientRetries++];
+        notifyStatus({ type: 'waiting', reason: 'Mạng chập chờn, đang thử lại', waitSec });
+        await sleep(waitSec * 1000, signal);
+        continue;
+      }
 
       if (err instanceof window.UnifiedAdapter.RateLimitError) {
         // 503/529 quá tải máy chủ -> Exponential Backoff 15s -> 30s -> 60s -> 120s, tối đa 8 lần
@@ -127,6 +160,17 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
           notifyStatus({ type: 'waiting', reason: `Máy chủ bận (${err.status})`, waitSec });
           await sleep(waitSec * 1000, signal);
           continue;
+        }
+
+        // 429: Proxy dùng chung (baseUrl) chỉ backoff ngắn 15s→30s→60s, KHÔNG khóa 24h
+        if (keyObj.baseUrl) {
+          if (proxy429Retries < PROXY_429_BACKOFF_SEC.length) {
+            const waitSec = Math.max(PROXY_429_BACKOFF_SEC[proxy429Retries++], err.retryAfterSec || 0);
+            notifyStatus({ type: 'waiting', reason: 'Máy chủ chung đang đông, tự thử lại', waitSec });
+            await sleep(waitSec * 1000, signal);
+            continue;
+          }
+          throw new Error('Máy chủ miễn phí đang quá tải tạm thời. Vui lòng thử lại sau ít phút.');
         }
 
         // 429: Phân biệt giới hạn phút (RPM) vs giới hạn ngày (RPD)
