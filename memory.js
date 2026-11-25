@@ -1,5 +1,9 @@
 function buildVoiceHandbook(mainChar = null) {
   const name = mainChar?.name ? mainChar.name : 'nhân vật chính';
+  const povPronoun = mainChar?.narratorPronoun ? String(mainChar.narratorPronoun).trim() : '';
+  const povLine = povPronoun
+    ? `- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn ${name}: trong trần thuật CHỈ gọi ${name} bằng tên hoặc đại từ "${povPronoun}", tuyệt đối không đổi sang "tôi/mình" hay nhảy đại từ ngôi ba khác ngoài lời thoại.`
+    : `- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn ${name}: dùng đúng đại từ ngôi ba mà hồ sơ dùng cho ${name} (nếu không rõ thì chọn một đại từ nhất quán), tuyệt đối không đổi sang "tôi/mình" hay nhảy đại từ ngoài lời thoại.`;
   const speechLine = mainChar?.speech_style
     ? `- Khẩu khí ${name}: ${mainChar.speech_style}`
     : '- Giọng thoại phân biệt rõ từng nhân vật theo cá tính riêng.';
@@ -9,13 +13,14 @@ function buildVoiceHandbook(mainChar = null) {
 
   return [
     'SỔ TAY GIỌNG VĂN (BẮT BUỘC):',
-    `- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn ${name} (gọi tên hoặc đại từ nhất quán, tuyệt đối không đổi sang "tôi" hay "hắn" ngoài lời thoại).`,
+    povLine,
     '- Nhịp câu: Câu ngắn, gãy gọn khi căng thẳng hoặc quan sát; câu vừa phải khi độc thoại nội tâm. Tránh câu ghép dài kiểu văn dịch.',
     '- Tả thực (Show, Don\'t Tell): Không gọi tên cảm xúc trực tiếp, hãy tả phản xạ cơ thể và chi tiết vật lý.',
     speechLine,
     misbeliefLine,
     '- Nhân vật có sẵn Ngoại hình/Trang bị trong hồ sơ thì BẮT BUỘC dùng đúng tên đồ đó, cấm tự bịa vũ khí/trang phục mới; chỗ nào hồ sơ để trống mới được tự bịa.',
     '- NPC quần chúng cấm trùng tên nhân vật có sẵn, không chiếm tâm điểm.',
+    '- Xưng hô đúng quan hệ/vai vế (anh/em/chú/cô/bác/ông/bà/cậu/tôi); cấm mặc định tôi-bạn/cậu-mình.',
     '- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).'
   ]
     .filter(Boolean)
@@ -229,8 +234,110 @@ async function lookupRecurringNpcs(sceneQuery) {
   return `QUẦN CHÚNG QUEN MẶT:\n${matched.map((n) => `- ${n.name}: ${n.note || n.personality || ''}`).join('\n')}`;
 }
 
+const HONORIFIC_PREFIX_RE = /^(?:cô|chú|bác|anh|chị|ông|bà|tiểu|lão)\s+/iu;
+
+function stripHonorificPrefix(raw) {
+  return String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(HONORIFIC_PREFIX_RE, '').trim();
+}
+
+function resolveKnownCharName(raw, allowedNames = []) {
+  const clean = String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!clean) return null;
+  for (const name of allowedNames) {
+    if (String(name || '').trim().toLowerCase() === clean) return name;
+  }
+  const stripped = stripHonorificPrefix(clean);
+  if (!stripped) return null;
+  for (const name of allowedNames) {
+    const canonLower = String(name || '').trim().toLowerCase();
+    if (canonLower === stripped || stripHonorificPrefix(canonLower) === stripped) return name;
+  }
+  return null;
+}
+
+function makePairKey(nameA, nameB) {
+  const pair = [nameA, nameB];
+  const swapped = pair[0].localeCompare(pair[1], 'vi') > 0;
+  const a = swapped ? nameB : nameA;
+  const b = swapped ? nameA : nameB;
+  return { key: `${a}|${b}`, a, b, swapped };
+}
+
+function nameAppearsInText(text, name) {
+  if (!text || !name) return false;
+  const escaped = String(name).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'u').test(String(text));
+}
+
+function getActiveSceneRelationships(relationships, sceneQuery) {
+  if (!relationships || !sceneQuery || !String(sceneQuery).trim()) return [];
+  const q = String(sceneQuery);
+  return Object.values(relationships).filter((rel) => {
+    if (!rel || !rel.a || !rel.b) return false;
+    if (!rel.aToB && !rel.bToA) return false;
+    return nameAppearsInText(q, rel.a) && nameAppearsInText(q, rel.b);
+  });
+}
+
+function formatSceneRelationships(relationships, sceneQuery) {
+  const matched = getActiveSceneRelationships(relationships, sceneQuery);
+  if (matched.length === 0) return '';
+  const parts = matched.map((r) => {
+    const dirs = [];
+    if (r.aToB) dirs.push(`${r.a}→${r.b} "${r.aToB}"`);
+    if (r.bToA) dirs.push(`${r.b}→${r.a} "${r.bToA}"`);
+    return `${dirs.join(', ')} (từ ch.${r.sinceChapter || 1})`;
+  });
+  return `Xưng hô đã nhớ: ${parts.join('; ')} — giữ nguyên trừ khi quan hệ đổi.`;
+}
+
+function mergeAddressingChanges(existingRelationships, changes, allowedNames = [], chapterNumber = 1, deletedNames = []) {
+  const deletedSet = new Set((deletedNames || []).map((n) => String(n || '').trim().toLowerCase()));
+  const next = {};
+
+  // Giữ cặp cũ, loại mọi cặp chứa tên vừa bị prune
+  for (const [k, v] of Object.entries(existingRelationships || {})) {
+    if (!v || !v.a || !v.b) continue;
+    if (deletedSet.has(v.a.toLowerCase()) || deletedSet.has(v.b.toLowerCase())) continue;
+    next[k] = { ...v };
+  }
+
+  // Upsert các thay đổi quan sát được trong thoại (chỉ Mức 2: cả hai đều có trong allowedNames)
+  for (const ch of Array.isArray(changes) ? changes : []) {
+    if (!ch || !ch.a || !ch.b) continue;
+    const canonA = resolveKnownCharName(ch.a, allowedNames);
+    const canonB = resolveKnownCharName(ch.b, allowedNames);
+    if (!canonA || !canonB || canonA === canonB) continue;
+    if (deletedSet.has(canonA.toLowerCase()) || deletedSet.has(canonB.toLowerCase())) continue;
+
+    const valAB = String(ch.aToB || '').trim();
+    const valBA = String(ch.bToA || '').trim();
+    if (!valAB && !valBA) continue;
+
+    const { key, a, b, swapped } = makePairKey(canonA, canonB);
+    const inAtoB = swapped ? valBA : valAB;
+    const inBtoA = swapped ? valAB : valBA;
+    const prev = next[key];
+
+    const changedExisting =
+      Boolean(prev) &&
+      ((inAtoB && prev.aToB && inAtoB.toLowerCase() !== prev.aToB.toLowerCase()) ||
+        (inBtoA && prev.bToA && inBtoA.toLowerCase() !== prev.bToA.toLowerCase()));
+
+    next[key] = {
+      a,
+      b,
+      aToB: inAtoB || prev?.aToB || '',
+      bToA: inBtoA || prev?.bToA || '',
+      sinceChapter: changedExisting ? chapterNumber : prev?.sinceChapter || chapterNumber
+    };
+  }
+
+  return next;
+}
+
 // JS Style Linter chạy cục bộ (0 API call)
-function lintScene(text) {
+function lintScene(text, options = {}) {
   const warnings = [];
   const lower = text.toLowerCase();
 
@@ -239,14 +346,72 @@ function lintScene(text) {
     warnings.push(`Tránh lặp các cụm sáo rỗng: "${foundSlop.join('", "')}".`);
   }
 
-  // Kiểm tra nhảy ngôi kể (chữ "tôi" xuất hiện ngoài dòng thoại "Tên: ...")
-  const nonDialogueLines = text
-    .split('\n')
-    .filter((l) => !/^[A-ZÀ-Ỹ][\wÀ-ỹ\s]{0,24}:\s+/.test(l.trim()))
-    .join(' ');
-  const strippedQuotes = nonDialogueLines.replace(/["“”][^"“”]*["“”]/g, '');
-  if (/\b(tôi|mình)\b/i.test(strippedQuotes)) {
-    warnings.push('Phát hiện đại từ ngôi thứ nhất ("tôi/mình") trong đoạn trần thuật; giữ chặt ngôi thứ ba (gọi tên nhân vật chính).');
+  const lines = text.split('\n');
+  const dialogueRe = /^([A-ZÀ-Ỹ][\wÀ-ỹ\s]{0,24}):\s+(.+)$/;
+  const dialogueEntries = [];
+  const nonDialogueParts = [];
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    const m = trimmed.match(dialogueRe);
+    if (m) {
+      dialogueEntries.push({ speaker: m[1].trim(), speech: m[2].trim() });
+    } else if (trimmed) {
+      nonDialogueParts.push(trimmed);
+    }
+  }
+
+  const strippedQuotes = nonDialogueParts.join(' ').replace(/["“][^"”]*["”]/g, '');
+  if (/(?<![\p{L}\p{N}_])(tôi|mình)(?![\p{L}\p{N}_])/iu.test(strippedQuotes)) {
+    warnings.push('Phát hiện đại từ ngôi thứ nhất ("tôi/mình") trong đoạn trần thuật; giữ chặt ngôi thứ ba.');
+  }
+
+  // Kiểm tra trôi đại từ POV (VD: đã khóa "hắn" nhưng trượt sang "anh ấy/anh ta")
+  const povPronoun = options?.mainChar?.narratorPronoun ? String(options.mainChar.narratorPronoun).trim().toLowerCase() : '';
+  if (povPronoun === 'hắn') {
+    const hanCount = (strippedQuotes.match(/(?<![\p{L}\p{N}_])hắn(?![\p{L}\p{N}_])/giu) || []).length;
+    const driftCount = (strippedQuotes.match(/(?<![\p{L}\p{N}_])(anh ấy|anh ta)(?![\p{L}\p{N}_])/giu) || []).length;
+    if (driftCount >= 2 && driftCount >= hanCount) {
+      warnings.push('Trần thuật đang trượt sang "anh ấy/anh ta"; giữ chặt đại từ đã nhớ "hắn" cho nhân vật chính.');
+    }
+  }
+
+  // Kiểm tra vi phạm cặp xưng hô đã nhớ trên dòng thoại "Tên: lời thoại"
+  const activeRels = Array.isArray(options?.sceneRelationships)
+    ? options.sceneRelationships
+    : getActiveSceneRelationships(options?.relationships, options?.sceneQuery);
+
+  if (activeRels.length > 0 && dialogueEntries.length > 0) {
+    const distinctSpeakers = new Set(dialogueEntries.map((d) => d.speaker.toLowerCase()));
+    const conflictNeutralRe = /(?<![\p{L}\p{N}_])(bạn|cậu|mình)(?![\p{L}\p{N}_])/iu;
+
+    for (const rel of activeRels) {
+      const checks = [
+        { from: rel.a, to: rel.b, expected: rel.aToB },
+        { from: rel.b, to: rel.a, expected: rel.bToA }
+      ];
+      for (const { from, to, expected } of checks) {
+        if (!expected) continue;
+        const fromLines = dialogueEntries.filter((d) => d.speaker.toLowerCase() === from.toLowerCase());
+        if (fromLines.length === 0) continue;
+
+        const directedLines =
+          distinctSpeakers.size <= 2
+            ? fromLines
+            : fromLines.filter((d) => nameAppearsInText(d.speech, to));
+        if (directedLines.length === 0) continue;
+
+        const expectedEscaped = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const expectedRe = new RegExp(`(?<![\\p{L}\\p{N}_])${expectedEscaped}(?![\\p{L}\\p{N}_])`, 'iu');
+        const usedExpected = directedLines.some((d) => expectedRe.test(d.speech));
+        const expectedAllowsNeutral = conflictNeutralRe.test(expected);
+        const leakedNeutral = !expectedAllowsNeutral && directedLines.some((d) => conflictNeutralRe.test(d.speech));
+
+        if (!usedExpected && leakedNeutral) {
+          warnings.push(`Xưng hô ${from}→${to} đang lệch khỏi dạng đã nhớ ("${expected}"); giữ đúng ở cảnh tiếp theo trừ khi quan hệ vừa đổi.`);
+        }
+      }
+    }
   }
 
   // Kiểm tra độ dài câu trung bình
@@ -386,7 +551,8 @@ async function serializeL2ForPrompt(l2) {
       pickedUpItems: st.pickedUpItems || ''
     };
   }
-  return JSON.stringify({ ...l2, characterStates: cleanStates });
+  const { relationships: _omitRelationships, ...restL2 } = l2 || {};
+  return JSON.stringify({ ...restL2, characterStates: cleanStates });
 }
 
 // L3: Tóm tắt phân tầng (3-5 chương gần nhất + Arc summary mỗi 5 chương)
@@ -518,7 +684,7 @@ async function pruneInactiveNpcs(chapterNumber, activeNpcNames = []) {
   const MAX_ACTIVE_NPCS = 15;
   const all = await window.StoryDB.db.characters.toArray();
   const npcs = all.filter((c) => c.role === 'npc');
-  if (npcs.length <= MAX_ACTIVE_NPCS) return 0;
+  if (npcs.length <= MAX_ACTIVE_NPCS) return [];
 
   const activeSet = new Set((activeNpcNames || []).map((s) => String(s || '').toLowerCase().trim()));
   const candidates = npcs
@@ -526,13 +692,13 @@ async function pruneInactiveNpcs(chapterNumber, activeNpcNames = []) {
     .sort((a, b) => (a.lastSeenChapter || 0) - (b.lastSeenChapter || 0));
 
   const toDelete = candidates.slice(0, npcs.length - MAX_ACTIVE_NPCS);
-  if (toDelete.length === 0) return 0;
+  if (toDelete.length === 0) return [];
 
   const backup = await window.StoryDB.getSetting('pruned_npcs_backup', []);
   const nextBackup = [...backup, ...toDelete].slice(-20);
   await window.StoryDB.setSetting('pruned_npcs_backup', nextBackup);
   await Promise.all(toDelete.map((n) => window.StoryDB.db.characters.delete(n.name)));
-  return toDelete.length;
+  return toDelete.map((n) => n.name);
 }
 
 
@@ -556,5 +722,9 @@ window.StoryMemory = {
   serializeL2ForPrompt,
   pruneInactiveNpcs,
   CLEAR_SENTINEL,
-  mergeCharacterState
+  mergeCharacterState,
+  resolveKnownCharName,
+  getActiveSceneRelationships,
+  formatSceneRelationships,
+  mergeAddressingChanges
 };

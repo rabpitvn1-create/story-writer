@@ -155,7 +155,9 @@ async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3,
   const systemPrompt = `${l1}\n\n${window.StoryMemory.buildVoiceHandbook(mainChar)}\n\n${window.StoryMemory.buildVoiceAnchors(mainChar)}`;
   const isLast = scene.index === totalScenes;
   const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
-  const recurringNpcText = await window.StoryMemory.lookupRecurringNpcs(`${scene.goal || ''} ${scene.beats || ''}`);
+  const sceneQuery = `${scene.goal || ''} ${scene.beats || ''}`;
+  const recurringNpcText = await window.StoryMemory.lookupRecurringNpcs(sceneQuery);
+  const addressingLine = window.StoryMemory.formatSceneRelationships(l2?.relationships, sceneQuery);
 
   const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 1.800–2.000 từ tiếng Việt).
 Mục tiêu cảnh: ${scene.goal}
@@ -163,6 +165,7 @@ ${prefsDirective ? `${prefsDirective}\n` : ''}Chi tiết: ${scene.beats}
 Trạng thái hiện tại (L2): ${l2Str}${recurringNpcText ? `\n${recurringNpcText}` : ''}
 Tóm tắt gần nhất (L3): ${l3.recentText || 'Chương mở đầu'}
 ${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
+${addressingLine ? `${addressingLine}` : ''}
 ${linterNotes.length ? `LƯU Ý SỬA PHONG CÁCH:\n- ${linterNotes.join('\n- ')}` : ''}
 ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư âm hoặc móc nối mở.' : 'KHÔNG được kết thúc chương ở cảnh này, chỉ dừng ở điểm chuyển cảnh tự nhiên.'}`;
 
@@ -227,6 +230,15 @@ async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null
   // D-01: mẫu characterStates liệt kê MỌI nhân vật có hồ sơ (role !== 'npc') để digest không bỏ sót key
   const allCharsForDigest = await window.StoryDB.db.characters.toArray();
   const trackedChars = allCharsForDigest.filter((c) => c.role !== 'npc');
+  const mainCharForDigest =
+    allCharsForDigest.find((c) => window.CodexParser?.isMainCharacter(c)) ||
+    trackedChars[0] ||
+    null;
+  const needPovPronoun = Boolean(mainCharForDigest && !mainCharForDigest.narratorPronoun);
+  const knownRelSummary = Object.values(l2?.relationships || {})
+    .map((r) => `${r.a}→${r.b}:"${r.aToB || ''}",${r.b}→${r.a}:"${r.bToA || ''}"`)
+    .join('; ');
+
   const stateTemplateObj = {};
   (trackedChars.length ? trackedChars : [{ name: Object.keys(l2.characterStates || {})[0] || 'Nhân vật chính' }]).forEach((c) => {
     stateTemplateObj[c.name] = { level: '', injuries: '', pickedUpItems: '' };
@@ -244,11 +256,12 @@ async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null
   "newWorldRules": ["luật/bối cảnh mới thực sự xác lập, KHÔNG ghi đồ bịa"],
   "evidence": { "<tên nhân vật hoặc nguyên văn luật mới>": "<trích đoạn nguyên văn <=120 ký tự từ chương>" },
   "characterStates": ${JSON.stringify(stateTemplateObj)},
-  "tension_level": 5
+  "addressingChanges": [{ "a": "", "b": "", "aToB": "", "bToA": "", "reason": "" }],
+${needPovPronoun ? `  "povPronoun": "đại từ ngôi 3 trần thuật đã dùng cho ${mainCharForDigest.name}",\n` : ''}  "tension_level": 5
 }
 QUY TẮC TRẠNG THÁI: Để "" hoặc null nghĩa là KHÔNG ĐỔI (giữ nguyên cũ). Đồ đã mất thì ghi vào newLostItems, không để inventory rỗng. Chỉ khi muốn xóa sạch thương tích/trạng thái đã hết mới ghi "[XÓA]".
-KHÔNG đưa NPC quần chúng vào characterStates.
-Sổ cái cũ: ${l2Str}
+KHÔNG đưa NPC quần chúng vào characterStates. addressingChanges chỉ ghi cặp quan trọng lần đầu đối thoại, bổ sung chiều trống hoặc đổi quan hệ lâu dài (đúng tên hồ sơ, chỉ ghi dạng đã thấy trong thoại); không đổi trả [].
+Sổ cái cũ: ${l2Str}${knownRelSummary ? `\nXưng hô đã nhớ: ${knownRelSummary}` : ''}
 Nội dung chương:\n${excerpt}`;
 
   let data = null;
@@ -308,16 +321,6 @@ Nội dung chương:\n${excerpt}`;
     mergedStates[k] = window.StoryMemory.mergeCharacterState(mergedStates[k], v);
   }
 
-  const nextLedger = {
-    location: data.location || l2.location,
-    deadCharacters: [...new Set([...(l2.deadCharacters || []), ...(data.newDeadCharacters || [])])],
-    lostItems: [...new Set([...(l2.lostItems || []), ...(data.newLostItems || [])])],
-    openHooks: Array.isArray(data.openHooks) ? data.openHooks : l2.openHooks,
-    relationships: l2.relationships || {},
-    characterStates: mergedStates,
-    tensionHistory: nextHistory
-  };
-  await window.StoryMemory.saveL2Ledger(nextLedger);
   await window.StoryMemory.harvestFromDigest(
     data.newCharacters || [],
     data.newWorldRules || [],
@@ -325,8 +328,39 @@ Nội dung chương:\n${excerpt}`;
     chapterNumber,
     data.evidence || null
   );
-  await window.StoryMemory.pruneInactiveNpcs(chapterNumber, data.activeNpcNames || []);
-}
+  const deletedNpcNames = await window.StoryMemory.pruneInactiveNpcs(chapterNumber, data.activeNpcNames || []);
+
+  // Khóa đại từ người kể 1 lần ở chương 1 nếu nhân vật chính chưa có narratorPronoun
+  if (needPovPronoun && mainCharForDigest && typeof data.povPronoun === 'string') {
+    const cleanPov = data.povPronoun.trim().toLowerCase();
+    if (cleanPov && cleanPov.length <= 10 && !/^(tôi|mình|ta|tao)$/i.test(cleanPov)) {
+      mainCharForDigest.narratorPronoun = cleanPov;
+      await window.StoryDB.db.characters.put(mainCharForDigest);
+    }
+  }
+
+  // Mức 2: lấy danh sách tên hợp lệ SAU khi harvest + prune đã hoàn tất
+  const allCharsAfterHarvest = await window.StoryDB.db.characters.toArray();
+  const allowedCharNames = allCharsAfterHarvest.map((c) => c.name).filter(Boolean);
+  const nextRelationships = window.StoryMemory.mergeAddressingChanges(
+    l2.relationships,
+    data.addressingChanges,
+    allowedCharNames,
+    chapterNumber,
+    deletedNpcNames
+  );
+
+  const nextLedger = {
+    location: data.location || l2.location,
+    deadCharacters: [...new Set([...(l2.deadCharacters || []), ...(data.newDeadCharacters || [])])],
+    lostItems: [...new Set([...(l2.lostItems || []), ...(data.newLostItems || [])])],
+    openHooks: Array.isArray(data.openHooks) ? data.openHooks : l2.openHooks,
+    relationships: nextRelationships,
+    characterStates: mergedStates,
+    tensionHistory: nextHistory
+  };
+  await window.StoryMemory.saveL2Ledger(nextLedger);
+  }
 
 async function writeNextChapter({
   onStatus,
@@ -462,7 +496,11 @@ async function writeNextChapter({
       // Cảnh rỗng thì không lưu — lần chạy sau sẽ viết lại đúng cảnh đó
       if (sceneText && sceneText.trim()) {
         sceneTexts.push(sceneText);
-        linterNotes = window.StoryMemory.lintScene(sceneText);
+        linterNotes = window.StoryMemory.lintScene(sceneText, {
+          mainChar,
+          relationships: l2?.relationships,
+          sceneQuery
+        });
         // Checkpoint ngay sau mỗi cảnh
         await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
         if (onSceneDone) onSceneDone(i, sceneText);

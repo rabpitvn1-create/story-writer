@@ -33,6 +33,7 @@ function emptyChar(name = '') {
     hard_constraints: '',
     misbelief: '',
     thirdRail: '',
+    narratorPronoun: null,
     isMain: null, // true = Chính, false = Phụ, null = tự động
     portrait: '',
     state: { level: '', injuries: '', inventory: '' }
@@ -308,6 +309,63 @@ function appendField(char, key, value, labelPrefix = '') {
   }
 }
 
+const THIRD_PERSON_PRONOUNS = [
+  'anh ấy',
+  'anh ta',
+  'cậu ấy',
+  'cô ấy',
+  'cô ta',
+  'hắn',
+  'chàng',
+  'nàng',
+  'gã'
+];
+const MALE_ONLY_PRONOUNS = new Set(['hắn', 'anh ấy', 'anh ta', 'cậu ấy', 'chàng', 'gã']);
+const FEMALE_ONLY_PRONOUNS = new Set(['cô ấy', 'cô ta', 'nàng']);
+
+function extractNarratorPronoun(char) {
+  if (!char) return null;
+  const raw = [char.description || '', char.personality || ''].filter(Boolean).join('\n');
+  if (raw.trim().length < 20) return null;
+
+  // Bỏ phần lời thoại trong ngoặc kép và dòng "Tên: ..."
+  const narration = raw
+    .split('\n')
+    .filter((l) => !/^[A-ZÀ-Ỹ][\wÀ-ỹ\s]{0,24}:\s+/.test(l.trim()))
+    .join('\n')
+    .replace(/["“][^"”]*["”]/g, ' ');
+
+  // Kiểm tra sơ bộ tương thích giới tính từ appearance / đoạn mở đầu
+  const genderHint = `${char.appearance || ''} ${raw.slice(0, 300)}`.toLowerCase();
+  const isFemale = /(?<![\p{L}])(giới tính\s*[:\-]?\s*nữ|nữ giới|cô gái|thiếu nữ|phụ nữ)(?![\p{L}])/iu.test(genderHint);
+  const isMale = /(?<![\p{L}])(giới tính\s*[:\-]?\s*nam|nam giới|chàng trai|đàn ông)(?![\p{L}])/iu.test(genderHint);
+
+  const candidates = THIRD_PERSON_PRONOUNS.filter((p) => {
+    if (isFemale && !isMale && MALE_ONLY_PRONOUNS.has(p)) return false;
+    if (isMale && !isFemale && FEMALE_ONLY_PRONOUNS.has(p)) return false;
+    return true;
+  });
+
+  let total = 0;
+  let bestPronoun = null;
+  let bestCount = 0;
+  for (const p of candidates) {
+    const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'giu');
+    const count = (narration.match(re) || []).length;
+    if (count > 0) {
+      total += count;
+      if (count > bestCount) {
+        bestCount = count;
+        bestPronoun = p;
+      }
+    }
+  }
+
+  if (!bestPronoun || bestCount < 3 || bestCount / total < 0.6) return null;
+  return bestPronoun;
+}
+
 function parseCodexText(text) {
   const lines = String(text || '')
     .split(/\r?\n/)
@@ -490,12 +548,18 @@ function parseCodexText(text) {
       continue;
     }
     const prev = byCode.get(key);
-    for (const k of ['aliases', 'appearance', 'personality', 'skills_abilities', 'inventory_default', 'speech_style', 'hard_constraints', 'portrait', 'misbelief', 'thirdRail', 'isMain']) {
+    for (const k of ['aliases', 'appearance', 'personality', 'skills_abilities', 'inventory_default', 'speech_style', 'hard_constraints', 'portrait', 'misbelief', 'thirdRail', 'narratorPronoun', 'isMain']) {
       if (!prev[k] && c[k]) prev[k] = c[k];
     }
   }
+  const finalized = [...byCode.values()].map((c) => {
+    if (!c.narratorPronoun) {
+      c.narratorPronoun = extractNarratorPronoun(c);
+    }
+    return c;
+  });
   return {
-    characters: [...byCode.values()],
+    characters: finalized,
     hardRules: [...new Set(hardRules)],
     softLore: [...new Set(softLore)],
     source: 'regex'
@@ -570,5 +634,6 @@ window.CodexParser = {
   extractInventorySummary,
   isGenericNpcTitle,
   buildNameConflictSet,
-  countNameInText
+  countNameInText,
+  extractNarratorPronoun
 };
