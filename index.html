@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Story Writer — Đọc truyện</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1/mammoth.browser.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <button id="settings-btn" class="icon-btn" aria-label="Cài đặt" title="Cài đặt">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+    <h1 id="chapter-title" class="chapter-title">CHAPTER 1</h1>
+    <div class="topbar-spacer" aria-hidden="true"></div>
+  </header>
+
+  <main class="book-container">
+    <article id="story-content" class="book-page"></article>
+  </main>
+
+  <!-- Panel Cài đặt -->
+  <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="settings-heading">Cài đặt</h2>
+        <button class="close-btn" data-close="settings-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <div class="setting-group">
+        <label for="font-select">Phông chữ</label>
+        <select id="font-select">
+          <option value="'Lora', Georgia, serif">Lora (Sách cổ điển)</option>
+          <option value="'Merriweather', Georgia, serif">Merriweather (Dễ đọc)</option>
+          <option value="'EB Garamond', Georgia, serif">EB Garamond (Tiểu thuyết)</option>
+          <option value="Georgia, 'Times New Roman', serif">Georgia (Mặc định máy)</option>
+          <option value="'Be Vietnam Pro', system-ui, sans-serif">Be Vietnam Pro (Không chân)</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label for="size-range">Cỡ chữ: <span id="size-value">18</span>px</label>
+        <div class="size-controls">
+          <button id="size-dec" type="button" class="step-btn" aria-label="Giảm cỡ chữ">A-</button>
+          <input id="size-range" type="range" min="14" max="26" step="1" value="18" />
+          <button id="size-inc" type="button" class="step-btn" aria-label="Tăng cỡ chữ">A+</button>
+        </div>
+      </div>
+      <div class="setting-group setting-divider">
+        <button id="open-import-codex-btn" type="button" class="primary-btn">
+          Nhập codex / wiki nhân vật
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel Nhập codex / wiki nhân vật -->
+  <div id="import-codex-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="import-codex-heading">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="import-codex-heading">Nhập codex / wiki nhân vật</h2>
+        <button class="close-btn" data-close="import-codex-modal" aria-label="Đóng">&times;</button>
+      </div>
+
+      <!-- Cách chính: Tải file .docx bằng mammoth.js -->
+      <div class="docx-section">
+        <input id="docx-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" />
+        <button id="upload-docx-btn" type="button" class="primary-btn">
+          Tải file DOCX lên
+        </button>
+        <p id="docx-status" class="docx-status">Chưa có file codex .docx nào được tải lên.</p>
+        <div id="docx-preview-wrap" class="docx-preview-wrap hidden">
+          <div id="docx-filename" class="docx-filename"></div>
+          <pre id="docx-preview" class="docx-preview"></pre>
+        </div>
+      </div>
+
+      <!-- Nhập tay bổ sung từng nhân vật -->
+      <form id="codex-form" class="codex-form setting-divider">
+        <p class="form-section-title">Hoặc nhập / cập nhật nhanh nhân vật</p>
+        <div class="setting-group">
+          <label for="input-char-name">Tên nhân vật</label>
+          <input id="input-char-name" type="text" required placeholder="Ví dụ: Kael hoặc Alxece" />
+        </div>
+        <div class="setting-group">
+          <label for="input-char-desc">Mô tả hồ sơ</label>
+          <textarea id="input-char-desc" rows="3" required placeholder="Ngoại hình, tính cách, ghi chú..."></textarea>
+        </div>
+        <div class="setting-group">
+          <label for="input-char-image-file">Ảnh chân dung (bỏ trống = nhân vật phụ)</label>
+          <input id="input-char-image-file" type="file" accept="image/*" />
+          <input id="input-char-image-url" type="url" class="url-input" placeholder="Hoặc dán URL ảnh chân dung..." />
+        </div>
+        <button type="submit" class="secondary-btn">Lưu nhân vật vào codex</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Panel Xem Codex Nhân vật -->
+  <div id="codex-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="codex-name">
+    <div class="modal-card codex-card">
+      <div class="modal-header">
+        <div class="codex-title-wrap">
+          <img id="codex-portrait" class="codex-portrait hidden" alt="" />
+          <div>
+            <h2 id="codex-name">Tên nhân vật</h2>
+            <p id="codex-kind" class="codex-role"></p>
+          </div>
+        </div>
+        <button class="close-btn" data-close="codex-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <div id="codex-body" class="codex-body"></div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,371 @@
+:root {
+  --paper-bg: #f6f1e7;
+  --paper-surface: #fbf8f2;
+  --ink: #2b2620;
+  --ink-muted: #6e6559;
+  --border: #dfd6c7;
+  --accent: #7a4b2a;
+  --reader-font: 'Lora', Georgia, serif;
+  --reader-size: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--paper-bg);
+  color: var(--ink);
+  font-family: 'Be Vietnam Pro', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thanh đầu trang */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  height: 54px;
+  padding: 0 14px;
+  background-color: rgba(246, 241, 231, 0.94);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.icon-btn:active {
+  background-color: rgba(43, 38, 32, 0.08);
+}
+
+.chapter-title {
+  margin: 0;
+  text-align: center;
+  font-family: var(--reader-font);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Trang sách */
+.book-container {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 26px 80px;
+}
+
+.book-page {
+  font-family: var(--reader-font);
+  font-size: var(--reader-size);
+  line-height: 1.8;
+  text-align: left;
+}
+
+.narrative-p {
+  margin: 0 0 1.25em;
+}
+
+/* Tên nhân vật được gạch dưới */
+.char-link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--accent);
+  cursor: pointer;
+}
+
+.char-link:hover,
+.char-link:active {
+  color: var(--accent);
+  background-color: rgba(122, 75, 42, 0.08);
+  border-radius: 2px;
+}
+
+/* Dòng thoại */
+.dialogue-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 1.1em;
+}
+
+/* Avatar vuông tự cắt giữa từ ảnh chân dung */
+.dialogue-avatar-btn {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  margin-top: 0.22em;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: transparent;
+  cursor: pointer;
+}
+
+.dialogue-avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.dialogue-text {
+  flex: 1;
+  margin: 0;
+}
+
+.speaker-label {
+  font-weight: 600;
+}
+
+/* Modal / Panel */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background-color: rgba(24, 20, 16, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+}
+
+@media (min-width: 600px) {
+  .modal-backdrop {
+    align-items: center;
+  }
+}
+
+.hidden {
+  display: none !important;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 480px;
+  max-height: 86vh;
+  overflow-y: auto;
+  background-color: var(--paper-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.close-btn {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+/* Cài đặt & Form nhập codex */
+.setting-group {
+  margin-bottom: 14px;
+}
+
+.setting-group:last-child {
+  margin-bottom: 0;
+}
+
+.setting-divider {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.setting-group label {
+  display: block;
+  font-size: 14px;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+}
+
+.setting-group select,
+.codex-form input[type="text"],
+.codex-form input[type="url"],
+.codex-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+  color: var(--ink);
+}
+
+.codex-form input[type="file"] {
+  width: 100%;
+  font-size: 14px;
+  color: var(--ink-muted);
+}
+
+.url-input {
+  margin-top: 8px;
+}
+
+.size-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.size-controls input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.step-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-btn,
+.secondary-btn {
+  width: 100%;
+  padding: 11px 16px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-btn {
+  border: none;
+  background-color: var(--accent);
+  color: #fff;
+}
+
+.secondary-btn {
+  border: 1px solid var(--accent);
+  background-color: #fff;
+  color: var(--accent);
+}
+
+.primary-btn:active,
+.secondary-btn:active {
+  opacity: 0.9;
+}
+
+/* Tải file DOCX */
+.docx-status {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.docx-preview-wrap {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+  overflow: hidden;
+}
+
+.docx-filename {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background-color: var(--paper-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.docx-preview {
+  margin: 0;
+  padding: 12px;
+  max-height: 170px;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.form-section-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Codex nhân vật */
+.codex-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.codex-portrait {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+  object-position: center;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.codex-role {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.codex-body {
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-line;
+}
