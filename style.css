@@ -563,3 +563,47 @@ body {
   font-size: 12px;
   color: var(--ink-muted);
 }
+
+/* Phần 4: Thanh điều khiển viết chương */
+.writer-bar {
+  margin-top: 36px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.writer-status {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: var(--paper-surface);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.writer-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.writer-actions .primary-btn,
+.writer-actions .secondary-btn {
+  flex: 1;
+}
+
+.danger-btn {
+  flex: 1;
+  padding: 11px 16px;
+  border: none;
+  border-radius: 8px;
+  background-color: #9e2a2b;
+  color: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}

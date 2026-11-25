@@ -15,6 +15,8 @@
   <script src="keypool.js" defer></script>
   <script src="queue.js" defer></script>
   <script src="codex.js" defer></script>
+  <script src="memory.js" defer></script>
+  <script src="chapter.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -40,6 +42,19 @@
 
   <main class="book-container">
     <article id="story-content" class="book-page"></article>
+
+    <section class="writer-bar" aria-label="Điều khiển viết chương">
+      <div id="writer-status" class="writer-status hidden"></div>
+      <div class="writer-actions">
+        <button id="prev-chapter-btn" type="button" class="step-btn">‹ Trước</button>
+        <button id="write-next-btn" type="button" class="primary-btn">Viết chương tiếp</button>
+        <button id="next-chapter-btn" type="button" class="step-btn">Sau ›</button>
+      </div>
+      <div id="stop-controls" class="writer-actions hidden">
+        <button id="graceful-stop-btn" type="button" class="secondary-btn">Dừng nhẹ (hết chương)</button>
+        <button id="hard-stop-btn" type="button" class="danger-btn">Dừng khẩn</button>
+      </div>
+    </section>
   </main>
 
   <!-- Panel Cài đặt -->

@@ -259,6 +259,28 @@ function appendLinkedText(container, text) {
   }
 }
 
+let currentChapterNumber = 1;
+
+async function loadAndRenderLatestChapter() {
+  const latest = await window.StoryDB.db.chapters.orderBy('number').last();
+  if (latest) {
+    currentChapterNumber = latest.number;
+    renderChapter(latest);
+  } else {
+    currentChapterNumber = MOCK_CHAPTER.number;
+    renderChapter(MOCK_CHAPTER);
+  }
+}
+
+async function openChapterByNumber(num) {
+  const ch = await window.StoryDB.db.chapters.get(num);
+  if (ch) {
+    currentChapterNumber = ch.number;
+    renderChapter(ch);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
 function renderChapter(chapter) {
   document.getElementById('chapter-title').textContent = `CHAPTER ${chapter.number}`;
   const container = document.getElementById('story-content');
@@ -688,6 +710,51 @@ function setupEvents(settings) {
     renderChapter(MOCK_CHAPTER);
     importModal.classList.add('hidden');
   });
+
+  // Phần 4: Thanh điều khiển viết chương
+  const statusEl = document.getElementById('writer-status');
+  const stopControls = document.getElementById('stop-controls');
+  const writeBtn = document.getElementById('write-next-btn');
+
+  writeBtn.addEventListener('click', async () => {
+    writeBtn.disabled = true;
+    stopControls.classList.remove('hidden');
+    statusEl.classList.remove('hidden');
+
+    await window.ChapterEngine.writeNextChapter({
+      onStatus: (msg) => {
+        statusEl.textContent = msg;
+      },
+      onChapterReady: async (chapterRecord) => {
+        const chars = await window.StoryDB.db.characters.toArray();
+        codex = Object.fromEntries(chars.map((c) => [c.name, c]));
+        renderCharDrawer();
+        currentChapterNumber = chapterRecord.number;
+        renderChapter(chapterRecord);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
+    writeBtn.disabled = false;
+    stopControls.classList.add('hidden');
+  });
+
+  document.getElementById('graceful-stop-btn').addEventListener('click', () => {
+    window.ChapterEngine.requestGracefulStop();
+    statusEl.textContent = 'Sẽ dừng sau khi viết xong chương hiện tại và cập nhật bộ nhớ...';
+  });
+
+  document.getElementById('hard-stop-btn').addEventListener('click', () => {
+    window.ChapterEngine.hardStop();
+  });
+
+  document.getElementById('prev-chapter-btn').addEventListener('click', () => {
+    if (currentChapterNumber > 1) openChapterByNumber(currentChapterNumber - 1);
+  });
+
+  document.getElementById('next-chapter-btn').addEventListener('click', () => {
+    openChapterByNumber(currentChapterNumber + 1);
+  });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -708,7 +775,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   applySettings(settings);
-  renderChapter(MOCK_CHAPTER);
+  try {
+    if (dbReady) await loadAndRenderLatestChapter();
+    else renderChapter(MOCK_CHAPTER);
+  } catch {
+    renderChapter(MOCK_CHAPTER);
+  }
   setupEvents(settings);
   if (dbReady) await refreshSettingsUI();
 });
