@@ -873,6 +873,18 @@ body {
   border-color: var(--accent);
 }
 
+.switch-btn {
+  bottom: 104px;
+  min-height: 44px;
+  color: var(--ink);
+  border-color: var(--border);
+}
+
+.switch-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .chapter-title-btn {
   border: none;
   background: transparent;

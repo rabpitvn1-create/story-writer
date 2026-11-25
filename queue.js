@@ -5,6 +5,87 @@ const lastCallByBucket = new Map();
 const TRANSIENT_RETRY_SEC = [5, 10];
 const PROXY_429_BACKOFF_SEC = [15, 30, 60];
 
+// Nút "Đổi API" giữa chương: state in-memory theo chương + gộp AbortSignal
+const MAX_SWITCHES_PER_CALL = 2;
+let chapterDeprioritized = [];
+let chapterSwitched = false;
+let activeCall = null;
+
+function combineSignals(primarySignal, secondarySignal) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+    const list = [primarySignal, secondarySignal].filter(Boolean);
+    return {
+      signal: list.length > 1 ? AbortSignal.any(list) : list[0] || undefined,
+      cleanup: () => {}
+    };
+  }
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+  const list = [primarySignal, secondarySignal].filter(Boolean);
+  for (const s of list) {
+    if (s.aborted) {
+      ctrl.abort();
+      return { signal: ctrl.signal, cleanup: () => {} };
+    }
+    s.addEventListener('abort', onAbort, { once: true });
+  }
+  return {
+    signal: ctrl.signal,
+    cleanup: () => {
+      for (const s of list) s.removeEventListener('abort', onAbort);
+    }
+  };
+}
+
+// Tên ngắn để hiện trên nút (label pool có thể dài, VD "Gemini Proxy (miễn phí)")
+function formatSourceLabel(keyObj) {
+  if (!keyObj) return 'API';
+  const label = String(keyObj.label || '').replace(/\s*\(.*\)\s*$/, '').trim();
+  return label || keyObj.provider || 'API';
+}
+
+function resetChapterOverrides() {
+  chapterDeprioritized = [];
+  chapterSwitched = false;
+}
+
+function getActiveCallState() {
+  if (!activeCall) {
+    return {
+      active: false,
+      lane: null,
+      sourceLabel: '',
+      startedAt: 0,
+      switchCount: 0,
+      maxSwitches: MAX_SWITCHES_PER_CALL,
+      hasFirstToken: false,
+      isWaiting: false,
+      canSwitch: false
+    };
+  }
+  return {
+    active: true,
+    lane: activeCall.lane,
+    sourceLabel: activeCall.sourceLabel,
+    startedAt: activeCall.startedAt,
+    switchCount: activeCall.switchCount,
+    maxSwitches: MAX_SWITCHES_PER_CALL,
+    hasFirstToken: activeCall.hasFirstToken,
+    isWaiting: activeCall.isWaiting,
+    canSwitch: activeCall.canSwitch
+  };
+}
+
+function requestSwitch() {
+  if (!activeCall) return false;
+  if (activeCall.hasFirstToken) return false;
+  if (activeCall.switchCount >= MAX_SWITCHES_PER_CALL) return false;
+  if (!activeCall.canSwitch) return false;
+  activeCall.switchedByUser = true;
+  activeCall.attemptController.abort();
+  return true;
+}
+
 function isTransientNetworkError(err) {
   if (!err || err.name === 'AbortError') return false;
   if (err.status === 502 || err.status === 504) return true;
@@ -19,6 +100,7 @@ function setStatusListener(fn) {
 }
 
 function notifyStatus(state) {
+  if (state?.type === 'waiting' && activeCall) activeCall.isWaiting = true;
   if (statusListener) statusListener(state);
 }
 
@@ -66,7 +148,7 @@ async function incrementBudget(usage = null) {
   return next;
 }
 
-async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal }) {
+async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal, selectOptions, onKeySelected, onBeforeFetch }) {
   const apiConfig = await window.StoryDB.getSetting('apiConfig', {});
   const freeOnly = Boolean(apiConfig.freeOnlyMode);
 
@@ -83,7 +165,7 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
   let backoffIndex = 0;
 
   while (true) {
-    const keyObj = await window.KeyPoolManager.selectKey(lane, freeOnly);
+    const keyObj = await window.KeyPoolManager.selectKey(lane, freeOnly, selectOptions || {});
     if (!keyObj) {
       const earliest = await window.KeyPoolManager.getEarliestReadyTime(lane, freeOnly);
       await window.StoryDB.setSetting('checkpoint', {
@@ -98,6 +180,7 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
           : 'Chưa có API key phù hợp trong pool.'
       );
     }
+    if (onKeySelected) onKeySelected(keyObj);
 
     // Key proxy có sẵn mang theo model mặc định của proxy đó (VD: Premium Proxy dùng occ/claude-haiku-5-5)
     const model =
@@ -117,6 +200,7 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
 
     let callUsage = null;
     try {
+      if (onBeforeFetch) onBeforeFetch();
       const result = await window.UnifiedAdapter.callLLM({
         provider: keyObj.provider,
         apiKey: keyObj.apiKey,
@@ -201,8 +285,103 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
   }
 }
 
+// Vòng lặp đổi API: mặc định 1 lượt y hệt cũ (dormant — codex cũng đi qua đây);
+// chỉ lặp tiếp khi người dùng bấm "Đổi API" (switchedByUser)
+async function enqueueWithSwitch(task) {
+  const lane = task?.lane || 'writer';
+  const chapterSignal = task?.signal || null;
+  let switchCount = 0;
+
+  while (true) {
+    const attemptController = new AbortController();
+    const { signal: mergedSignal, cleanup } = combineSignals(chapterSignal, attemptController.signal);
+    const availableCount = await window.KeyPoolManager.countAvailableSources(lane);
+    let fetchDispatched = false;
+    let currentKey = null;
+    let currentSourceKey = null;
+
+    activeCall = {
+      lane,
+      sourceLabel: 'API',
+      sourceKey: null,
+      startedAt: Date.now(),
+      switchCount,
+      hasFirstToken: false,
+      isWaiting: false,
+      canSwitch: availableCount >= 2,
+      attemptController,
+      switchedByUser: false
+    };
+    notifyStatus({ type: 'call_started', lane, switchCount });
+
+    const origOnToken = task?.onToken;
+    const wrappedOnToken = (chunk, full) => {
+      if (activeCall && !activeCall.hasFirstToken && (chunk || full)) {
+        activeCall.hasFirstToken = true;
+        activeCall.isWaiting = false;
+        notifyStatus({ type: 'first_token', lane });
+      }
+      if (origOnToken) origOnToken(chunk, full);
+    };
+
+    try {
+      const result = await executeWithPool({
+        ...task,
+        signal: mergedSignal,
+        onToken: origOnToken ? wrappedOnToken : undefined,
+        selectOptions: {
+          deprioritized: chapterDeprioritized,
+          persistSticky: !chapterSwitched
+        },
+        onKeySelected: (keyObj) => {
+          currentKey = keyObj;
+          currentSourceKey = keyObj ? `${keyObj.provider}:${keyObj.id}` : null;
+          if (activeCall) {
+            activeCall.sourceKey = currentSourceKey;
+            activeCall.sourceLabel = formatSourceLabel(keyObj);
+          }
+        },
+        onBeforeFetch: () => {
+          fetchDispatched = true;
+          if (activeCall) activeCall.isWaiting = false;
+        }
+      });
+
+      cleanup();
+      activeCall = null;
+      notifyStatus({ type: 'call_ended', lane });
+      return result;
+    } catch (err) {
+      cleanup();
+      const isChapterAbort = Boolean(chapterSignal?.aborted);
+      const isUserSwitch = Boolean(!isChapterAbort && activeCall?.switchedByUser && attemptController.signal.aborted);
+
+      if (isUserSwitch && switchCount < MAX_SWITCHES_PER_CALL) {
+        // Lượt bị ngắt tính +1 call, 0 token — chỉ khi đã thực sự gửi fetch
+        if (fetchDispatched && currentKey) {
+          try {
+            await incrementBudget(null);
+          } catch {
+            // Không để lỗi ghi budget chặn luồng đổi API
+          }
+        }
+        chapterSwitched = true;
+        if (currentSourceKey && !chapterDeprioritized.includes(currentSourceKey)) {
+          chapterDeprioritized.push(currentSourceKey);
+        }
+        switchCount++;
+        continue;
+      }
+
+      activeCall = null;
+      notifyStatus({ type: 'call_ended', lane });
+      throw err;
+    }
+  }
+}
+
 function enqueue(requestParams) {
-  const run = queueChain.then(() => executeWithPool(requestParams));
+  const run = queueChain.then(() => enqueueWithSwitch(requestParams));
   queueChain = run.catch(() => {});
   return run;
 }
@@ -210,5 +389,8 @@ function enqueue(requestParams) {
 window.RequestQueue = {
   enqueue,
   getBudgetState,
-  setStatusListener
+  setStatusListener,
+  getActiveCallState,
+  requestSwitch,
+  resetChapterOverrides
 };

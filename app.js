@@ -563,8 +563,8 @@ function renderChapter(chapter) {
 
 // Đọc dần khi đang viết (streaming/typewriter) — chữ hiện dần như tin nhắn đang gõ
 // HẰNG SỐ TỐC ĐỘ NHẢ CHỮ DUY NHẤT (từ/phút) — chỉnh ở đây để nhanh/chậm hơn:
-// 300 từ/phút ≈ 1 từ mỗi 200ms (chờ thử thực tế 250 / 320 / 420 trên điện thoại thật)
-const TYPEWRITER_SPEED_WPM = 300; // Chờ thử thực tế 250 / 320 / 420 trên điện thoại thật
+// 600 từ/phút ≈ 1 từ mỗi 100ms (tăng gấp đôi theo quyết định 26/11: 300 quá chậm trên điện thoại)
+const TYPEWRITER_SPEED_WPM = 600;
 const TYPEWRITER_WORDS_PER_TICK = 1;
 const TYPEWRITER_TICK_MS = Math.max(40, Math.round((TYPEWRITER_WORDS_PER_TICK * 60000) / TYPEWRITER_SPEED_WPM));
 
@@ -628,6 +628,9 @@ const StreamRenderer = {
   tailEl: null,
   followBtn: null,
   skipBtn: null,
+  switchBtn: null,
+  switchTimer: null,
+  switchCooldownUntil: 0,
   scrollHandlerBound: null,
 
   ensureFloatingControls() {
@@ -650,6 +653,69 @@ const StreamRenderer = {
       this.skipBtn.textContent = 'Hiện hết cảnh ⏭';
       this.skipBtn.addEventListener('click', () => this.flushAll());
       document.body.appendChild(this.skipBtn);
+    }
+    if (!this.switchBtn) {
+      this.switchBtn = document.createElement('button');
+      this.switchBtn.type = 'button';
+      this.switchBtn.className = 'stream-float-btn switch-btn hidden';
+      this.switchBtn.textContent = 'Đổi API';
+      this.switchBtn.addEventListener('click', () => {
+        if (Date.now() < this.switchCooldownUntil) return;
+        const ok = window.RequestQueue?.requestSwitch?.();
+        if (!ok) return;
+        this.switchCooldownUntil = Date.now() + 3000;
+        this.switchBtn.disabled = true;
+        this.switchBtn.textContent = 'Đang chuyển...';
+        setTimeout(() => {
+          if (this.switchBtn) this.switchBtn.disabled = false;
+          this.updateSwitchButton();
+        }, 3000);
+      });
+      document.body.appendChild(this.switchBtn);
+    }
+  },
+
+  startSwitchTimer() {
+    // Dùng vòng đời chương (isWriting) chứ không phải StreamRenderer.active:
+    // dàn ý chạy TRƯỚC khi StreamRenderer.start(), digest chạy SAU khi cleanupUI()
+    if (!window.ChapterEngine?.isWriting?.()) return;
+    this.ensureFloatingControls();
+    this.stopSwitchTimer();
+    this.updateSwitchButton();
+    this.switchTimer = setInterval(() => this.updateSwitchButton(), 1000);
+  },
+
+  stopSwitchTimer() {
+    if (this.switchTimer) {
+      clearInterval(this.switchTimer);
+      this.switchTimer = null;
+    }
+    if (this.switchBtn) {
+      this.switchBtn.classList.add('hidden');
+      this.switchBtn.disabled = false;
+    }
+  },
+
+  updateSwitchButton() {
+    if (!this.switchBtn || !window.ChapterEngine?.isWriting?.()) return;
+    const st = window.RequestQueue?.getActiveCallState?.();
+    if (!st || !st.active || st.hasFirstToken || !st.canSwitch || st.switchCount >= st.maxSwitches) {
+      this.switchBtn.classList.add('hidden');
+      return;
+    }
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - st.startedAt) / 1000));
+    const shouldShow = st.isWaiting || elapsedSec >= 25;
+    if (!shouldShow) {
+      this.switchBtn.classList.add('hidden');
+      return;
+    }
+    this.switchBtn.classList.remove('hidden');
+    if (Date.now() < this.switchCooldownUntil) {
+      this.switchBtn.disabled = true;
+      this.switchBtn.textContent = 'Đang chuyển...';
+    } else {
+      this.switchBtn.disabled = false;
+      this.switchBtn.textContent = `Đổi API (${st.sourceLabel} · ${elapsedSec}s)`;
     }
   },
 
@@ -857,6 +923,7 @@ setChapterSubtitle(title) {
       clearTimeout(this.sseThrottleTimer);
       this.sseThrottleTimer = null;
     }
+    this.stopSwitchTimer();
   },
 
   cleanupUI() {
@@ -1421,6 +1488,17 @@ function setupEvents(settings) {
   });
 
   window.RequestQueue.setStatusListener((state) => {
+    if (state.type === 'call_started') {
+      StreamRenderer.startSwitchTimer();
+      return;
+    }
+    if (state.type === 'first_token' || state.type === 'call_ended') {
+      StreamRenderer.stopSwitchTimer();
+      return;
+    }
+    if (state.type === 'waiting') {
+      StreamRenderer.updateSwitchButton();
+    }
     if (state.type === 'budget') {
       document.getElementById('budget-display').textContent = `${state.used}/${state.cap} calls hôm nay`;
     } else if (state.type === 'all_cooldown') {

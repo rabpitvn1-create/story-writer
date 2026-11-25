@@ -60,23 +60,60 @@ async function recordKeySuccess(keyId) {
 // - Free trước: thử pool Gemini miễn phí trước, chỉ dùng Claude khi tất cả key Gemini cạn/cooldown
 // - Nếu bật freeOnlyMode: chỉ dùng ['gemini'], hết Gemini thì dừng đợi
 // - Tự quay lại Gemini ngay khi có bất kỳ key Gemini nào hết cooldown 24h
-async function selectKey(lane, freeOnlyMode) {
+// - Chuyển tay giữa chương: nguồn bị bỏ qua xếp cuối danh sách (deprioritized), không loại trừ
+async function getEligibleKeys(lane, freeOnlyMode) {
+  const freeOnly =
+    typeof freeOnlyMode === 'boolean'
+      ? freeOnlyMode
+      : Boolean((await window.StoryDB.getSetting('apiConfig', {}))?.freeOnlyMode);
   const pool = await refreshExpiredCooldowns();
-  const activeKeyId = await window.StoryDB.getSetting(`sticky_${lane}`, null);
+  const allowedProviders = freeOnly ? ['gemini'] : ['gemini', 'claude'];
+  const rank = (k) => {
+    const i = allowedProviders.indexOf(k.provider);
+    return i === -1 ? allowedProviders.length : i;
+  };
+  return pool
+    .filter((k) => allowedProviders.includes(k.provider) && k.status === 'ready')
+    .sort((a, b) => rank(a) - rank(b));
+}
 
-  const allowedProviders = freeOnlyMode ? ['gemini'] : ['gemini', 'claude'];
+// Đếm số nguồn khả dụng (để nút "Đổi API" chỉ hiện khi có ≥ 2 nguồn)
+async function countAvailableSources(lane, freeOnlyMode) {
+  const eligible = await getEligibleKeys(lane, freeOnlyMode);
+  return new Set(eligible.map((k) => `${k.provider}:${k.id}`)).size;
+}
 
-  for (const provider of allowedProviders) {
-    const readyList = pool.filter((k) => k.provider === provider && k.status === 'ready');
-    if (readyList.length === 0) continue;
+async function selectKey(lane, freeOnlyMode, options = {}) {
+  const eligible = await getEligibleKeys(lane, freeOnlyMode);
+  if (eligible.length === 0) return null;
 
-    const sticky = readyList.find((k) => k.id === activeKeyId);
-    const chosen = sticky || readyList[0];
-    await window.StoryDB.setSetting(`sticky_${lane}`, chosen.id);
-    return chosen;
+  const deprioritizedSet = new Set(
+    (Array.isArray(options?.deprioritized) ? options.deprioritized : []).map((s) => String(s || '').trim())
+  );
+  // shortcut: không ghi sticky khi đã chuyển tay trong chương (chặn rò sang chương sau)
+  const persistSticky = options?.persistSticky !== false;
+
+  const ordered = [
+    ...eligible.filter((k) => !deprioritizedSet.has(`${k.provider}:${k.id}`)),
+    ...eligible.filter((k) => deprioritizedSet.has(`${k.provider}:${k.id}`))
+  ];
+
+  const stickyId = persistSticky ? await window.StoryDB.getSetting(`sticky_${lane}`, null) : null;
+  let chosen = null;
+  if (stickyId != null) {
+    // Đọc cả 2 định dạng sticky: id trần (bản cũ) và "provider:id" (bản mới)
+    chosen =
+      ordered.find(
+        (k) =>
+          (String(k.id) === String(stickyId) || `${k.provider}:${k.id}` === String(stickyId)) &&
+          !deprioritizedSet.has(`${k.provider}:${k.id}`)
+      ) || null;
   }
-
-  return null;
+  if (!chosen) chosen = ordered[0] || null;
+  if (chosen && persistSticky) {
+    await window.StoryDB.setSetting(`sticky_${lane}`, `${chosen.provider}:${chosen.id}`);
+  }
+  return chosen;
 }
 
 async function getEarliestReadyTime(lane, freeOnlyMode) {
@@ -97,5 +134,6 @@ window.KeyPoolManager = {
   markCooldown24h,
   recordKeySuccess,
   selectKey,
+  countAvailableSources,
   getEarliestReadyTime
 };

@@ -382,6 +382,7 @@ async function writeNextChapter({
 }) {
   if (isWriting) return;
   isWriting = true;
+  window.RequestQueue?.resetChapterOverrides?.();
   gracefulStopRequested = false;
   activeAbortController = new AbortController();
   const signal = activeAbortController.signal;
@@ -557,6 +558,7 @@ async function writeNextChapter({
   } finally {
     isWriting = false;
     activeAbortController = null;
+    window.RequestQueue?.resetChapterOverrides?.();
   }
 }
 
