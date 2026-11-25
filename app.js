@@ -716,13 +716,20 @@ function setupEvents(settings) {
   const stopControls = document.getElementById('stop-controls');
   const writeBtn = document.getElementById('write-next-btn');
 
-  writeBtn.addEventListener('click', async () => {
+  // Viết chương tiếp (dùng chung cho nút viết thường và viết theo gợi ý)
+  async function startWriting(userDirection = '', onDone) {
+    // Đang viết dở thì không mở thêm phiên viết nữa (tránh ẩn mất nút Dừng)
+    if (window.ChapterEngine.isWriting()) return;
+    document.getElementById('suggestion-panel').classList.add('hidden');
     writeBtn.disabled = true;
     document.getElementById('endless-start-btn').disabled = true;
+    document.getElementById('goto-next-chapter-btn').disabled = true;
+    document.getElementById('suggest-next-btn').disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
 
     await window.ChapterEngine.writeNextChapter({
+      userDirection,
       onStatus: (msg) => {
         statusEl.textContent = msg;
       },
@@ -733,13 +740,18 @@ function setupEvents(settings) {
         currentChapterNumber = chapterRecord.number;
         renderChapter(chapterRecord);
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (onDone) onDone(chapterRecord);
       }
     });
 
     writeBtn.disabled = false;
     document.getElementById('endless-start-btn').disabled = false;
+    document.getElementById('goto-next-chapter-btn').disabled = false;
+    document.getElementById('suggest-next-btn').disabled = false;
     stopControls.classList.add('hidden');
-  });
+  }
+
+  writeBtn.addEventListener('click', () => startWriting());
 
   document.getElementById('graceful-stop-btn').addEventListener('click', () => {
     if (window.EndlessManager) window.EndlessManager.stopEndlessGraceful();
@@ -766,6 +778,8 @@ function setupEvents(settings) {
   endlessBtn.addEventListener('click', async () => {
     writeBtn.disabled = true;
     endlessBtn.disabled = true;
+    document.getElementById('goto-next-chapter-btn').disabled = true;
+    document.getElementById('suggest-next-btn').disabled = true;
     stopControls.classList.remove('hidden');
     statusEl.classList.remove('hidden');
 
@@ -783,6 +797,8 @@ function setupEvents(settings) {
       onFinished: () => {
         writeBtn.disabled = false;
         endlessBtn.disabled = false;
+        document.getElementById('goto-next-chapter-btn').disabled = false;
+        document.getElementById('suggest-next-btn').disabled = false;
         stopControls.classList.add('hidden');
       }
     });
@@ -793,6 +809,48 @@ function setupEvents(settings) {
   });
   document.getElementById('export-current-btn').addEventListener('click', () => {
     window.EndlessManager.exportCurrentChapterMd(currentChapterNumber);
+  });
+
+  // Cuối chương: chuyển chương + gợi ý chương mới
+  document.getElementById('goto-next-chapter-btn').addEventListener('click', async () => {
+    let next = null;
+    try {
+      next = await window.StoryDB.db.chapters.get(currentChapterNumber + 1);
+    } catch {
+      // DB chưa sẵn sàng -> viết chương mới
+    }
+    if (next) openChapterByNumber(currentChapterNumber + 1);
+    else await startWriting();
+  });
+
+  document.getElementById('suggest-next-btn').addEventListener('click', () => {
+    const panel = document.getElementById('suggestion-panel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) document.getElementById('next-chapter-suggestion').focus();
+  });
+
+  document.getElementById('cancel-suggestion-btn').addEventListener('click', () => {
+    document.getElementById('suggestion-panel').classList.add('hidden');
+  });
+
+  document.getElementById('write-suggested-btn').addEventListener('click', async () => {
+    const suggestionEl = document.getElementById('next-chapter-suggestion');
+    const direction = suggestionEl.value.trim();
+    if (!direction) {
+      statusEl.textContent = 'Nhập gợi ý cho chương mới trước đã nhé.';
+      statusEl.classList.remove('hidden');
+      suggestionEl.focus();
+      return;
+    }
+    document.getElementById('suggestion-panel').classList.add('hidden');
+    // Có bản nháp thì gợi ý bị bỏ qua — giữ lại chữ để anh dùng cho chương sau
+    let draft = null;
+    try {
+      draft = await window.StoryDB.getSetting('chapter_draft', null);
+    } catch {
+      draft = null;
+    }
+    await startWriting(direction, draft?.outline ? undefined : () => { suggestionEl.value = ''; });
   });
 }
 

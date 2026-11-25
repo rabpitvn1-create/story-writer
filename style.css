@@ -607,3 +607,44 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* Cuối chương: chuyển chương + gợi ý chương mới */
+.chapter-end {
+  margin-top: 36px;
+  display: flex;
+  gap: 8px;
+}
+
+.chapter-end .primary-btn,
+.chapter-end .secondary-btn {
+  flex: 1;
+}
+
+.suggestion-panel {
+  margin-top: 10px;
+  padding: 14px;
+  background-color: var(--paper-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.suggestion-panel label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.suggestion-panel textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: #fff;
+  color: var(--ink);
+  resize: vertical;
+}

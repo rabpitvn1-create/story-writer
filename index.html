@@ -45,6 +45,19 @@
   <main class="book-container">
     <article id="story-content" class="book-page"></article>
 
+    <section class="chapter-end" aria-label="Cuối chương">
+      <button id="goto-next-chapter-btn" type="button" class="primary-btn">Chuyển chương →</button>
+      <button id="suggest-next-btn" type="button" class="secondary-btn">Gợi ý chương mới</button>
+    </section>
+    <div id="suggestion-panel" class="suggestion-panel hidden">
+      <label for="next-chapter-suggestion">Gợi ý cho chương tiếp theo</label>
+      <textarea id="next-chapter-suggestion" rows="3" placeholder="Ví dụ: Kai gặp lại Alxece ở tầng 0, nhưng cô ấy không còn nhớ anh…"></textarea>
+      <div class="writer-actions">
+        <button id="write-suggested-btn" type="button" class="primary-btn">Viết chương mới theo gợi ý</button>
+        <button id="cancel-suggestion-btn" type="button" class="step-btn">Đóng</button>
+      </div>
+    </div>
+
     <section class="writer-bar" aria-label="Điều khiển viết chương">
       <div id="writer-status" class="writer-status hidden"></div>
       <div class="writer-actions">

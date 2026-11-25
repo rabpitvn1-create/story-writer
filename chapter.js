@@ -27,7 +27,7 @@ function trimToWordLimit(text, maxWords = 2250) {
   return lastPeriod > sliced.length * 0.7 ? sliced.slice(0, lastPeriod + 1) : sliced;
 }
 
-async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null) {
+async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '') {
   const l4Text = l4Hits.map((h) => `[Chương ${h.chapterNumber}]: ${h.snippet}`).join('\n');
   const recentMotifsText = creativity?.recentMotifs?.length
     ? creativity.recentMotifs.map((m) => `${m.conflict}/${m.environment}`).join(', ')
@@ -37,6 +37,7 @@ async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditF
 HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${creativity?.branchLabel || ''})
 TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
 ${creativity?.tensionNote ? `NHỊP CĂNG THẲNG: ${creativity.tensionNote}` : ''}
+${userDirection ? `GỢI Ý CỦA NGƯỜI VIẾT (ưu tiên cao nhất, dàn ý phải bám sát gợi ý này): ${userDirection}` : ''}
 ${auditFixNote ? `SỬA LỖI VI PHẠM CANON TRƯỚC ĐÓ: ${auditFixNote}` : ''}
 
 Trả về JSON thuần:
@@ -81,7 +82,7 @@ L4: ${l4Text || 'Không có'}`;
     if (!auditFixNote && window.EndlessManager) {
       const violations = window.EndlessManager.auditOutlineContinuity(outline, l2);
       if (violations.length > 0) {
-        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity);
+        return generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, violations.join(' '), creativity, userDirection);
       }
     }
     return outline;
@@ -214,7 +215,7 @@ Nội dung chương:\n${excerpt}`;
   await window.StoryMemory.saveL2Ledger(nextLedger);
 }
 
-async function writeNextChapter({ onStatus, onChapterReady }) {
+async function writeNextChapter({ onStatus, onChapterReady, userDirection = '' }) {
   if (isWriting) return;
   isWriting = true;
   gracefulStopRequested = false;
@@ -234,12 +235,17 @@ async function writeNextChapter({ onStatus, onChapterReady }) {
     let outline = draft?.outline;
     let sceneTexts = draft?.sceneTexts || [];
 
+    // Đã có bản nháp thì dàn ý giữ nguyên — gợi ý mới không áp dụng cho chương này
+    if (draft?.outline && userDirection) {
+      onStatus(`Chương ${chapterNumber}: đang viết tiếp từ bản nháp, gợi ý mới không áp dụng cho chương này.`);
+    }
+
     if (!outline) {
       const creativity = window.EndlessManager
         ? await window.EndlessManager.getCreativityConstraints(l2)
         : null;
       onStatus(`Chương ${chapterNumber}: Đang lập dàn ý (Hướng: ${creativity?.branchLabel || 'Tự do'})...`);
-      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, '', creativity);
+      outline = await generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, '', creativity, userDirection);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
 
