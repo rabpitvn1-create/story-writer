@@ -1,30 +1,38 @@
+// memory.js:1-31 — buildVoiceHandbook rút gọn (6 giữ cố định + 2 gộp = 8 bullet cố định; misbeliefLine tùy chọn)
 function buildVoiceHandbook(mainChar = null) {
   const name = mainChar?.name ? mainChar.name : 'nhân vật chính';
   const povPronoun = mainChar?.narratorPronoun ? String(mainChar.narratorPronoun).trim() : '';
+  // [GIỮ 1] Khóa đại từ POV
   const povLine = povPronoun
     ? `- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn ${name}: trong trần thuật CHỈ gọi ${name} bằng tên hoặc đại từ "${povPronoun}", tuyệt đối không đổi sang "tôi/mình" hay nhảy đại từ ngôi ba khác ngoài lời thoại.`
     : `- Ngôi kể: Ngôi thứ ba giới hạn qua góc nhìn ${name}: dùng đúng đại từ ngôi ba mà hồ sơ dùng cho ${name} (nếu không rõ thì chọn một đại từ nhất quán), tuyệt đối không đổi sang "tôi/mình" hay nhảy đại từ ngoài lời thoại.`;
+  // [GIỮ 3] Khẩu khí nhân vật chính
   const speechLine = mainChar?.speech_style
     ? `- Khẩu khí ${name}: ${mainChar.speech_style}`
     : '- Giọng thoại phân biệt rõ từng nhân vật theo cá tính riêng.';
+  // [TÙY CHỌN] Điểm mù nội tâm (chỉ xuất khi mainChar.misbelief khác rỗng)
   const misbeliefLine = mainChar?.misbelief
     ? `- Điểm mù nội tâm (${name}): ${mainChar.misbelief}`
     : '';
 
   return [
     'SỔ TAY GIỌNG VĂN (BẮT BUỘC):',
-    povLine,
-    '- Nhịp câu: Câu ngắn, gãy gọn khi căng thẳng hoặc quan sát; câu vừa phải khi độc thoại nội tâm. Tránh câu ghép dài kiểu văn dịch.',
-    '- Xen kẽ câu ngắn dứt khoát với câu dài uyển chuyển; không nối liền quá 3 câu rất ngắn (3–5 chữ).',
+    povLine, // [GIỮ 1/6]
+    // [GỘP 1/2] Gộp "Nhịp câu" cũ + "Xen kẽ câu ngắn/dài" (114 ký tự)
+    '- Nhịp câu: Xen kẽ câu ngắn dứt khoát với câu dài uyển chuyển; tránh nối quá 3 câu rất ngắn hay câu ghép văn dịch.',
+    // [GIỮ 2/6] Show, Don't Tell
     '- Tả thực (Show, Don\'t Tell): Không gọi tên cảm xúc trực tiếp, hãy tả phản xạ cơ thể và chi tiết vật lý.',
-    speechLine,
-    misbeliefLine,
-    '- Nhân vật có sẵn Ngoại hình/Trang bị trong hồ sơ thì BẮT BUỘC dùng đúng tên đồ đó, cấm tự bịa vũ khí/trang phục mới; chỗ nào hồ sơ để trống mới được tự bịa.',
-    '- Sau lần nhắc đầy đủ đầu tiên về trang bị/đạo cụ, các lần sau chỉ gọi ngắn gọn 1–2 từ, không lặp nguyên xi cụm mô tả dài.',
+    speechLine, // [GIỮ 3/6]
+    misbeliefLine, // [TÙY CHỌN — rỗng với hồ sơ không có misbelief]
+    // [GỘP 2/2] Gộp "Trang bị hồ sơ (155 ký tự)" + "Sau lần nhắc đầu gọi gọn 1–2 từ" (129 ký tự)
+    '- Trang bị/Ngoại hình: dùng đúng đồ trong hồ sơ, cấm tự bịa mới; sau lần nhắc đầu chỉ gọi gọn 1–2 từ, không lặp nguyên cụm mô tả.',
+    // [GIỮ 4/6] NPC quần chúng (66 ký tự)
     '- NPC quần chúng cấm trùng tên nhân vật có sẵn, không chiếm tâm điểm.',
+    // [GIỮ 5/6] Barrier xưng hô (đúng 94 ký tự nguyên văn)
     '- Xưng hô đúng quan hệ/vai vế (anh/em/chú/cô/bác/ông/bà/cậu/tôi); cấm mặc định tôi-bạn/cậu-mình.',
-    '- Dùng tiếng Việt chuẩn, rõ nghĩa; không tự ghép từ lạ, không chèn chữ Hán hay tiếng Anh vào văn xuôi.',
-    '- Kiểm tra từng câu: từ phải đúng nghĩa đen và đúng vật lý của cảnh; không ghép 2 cấu trúc câu làm một.',
+    // [ĐÃ XÓA 1/2] Dòng f1 cũ (memory.js:24, 102 ký tự) -> đã dời & nâng cấp xuống userPrompt ở chapter.js
+    // [ĐÃ XÓA 2/2] Dòng "Kiểm tra từng câu: từ phải đúng nghĩa đen và đúng vật lý..." (~105 ký tự)
+    // [GIỮ 6/6] Định dạng thoại
     '- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).'
   ]
     .filter(Boolean)
@@ -485,15 +493,74 @@ function extractLexicalContext(str, index, matchLen) {
   return str.slice(start, end).replace(/\s+/g, ' ').trim().slice(0, 40);
 }
 
+// Đo phonotactics (badSyllable) + denylist cụm nghi ngờ (knownTypos) — CHỈ để đo, không chặn/không auto-fix
+const PHONO_LOANWORD_WHITELIST = new Set([
+  'radio', 'kraft', 'laptop', 'ozone', 'video', 'menu', 'sofa', 'taxi',
+  'pixel', 'virus', 'robot', 'laser', 'radar', 'pin', 'cáp', 'kềm'
+]);
+
+const VN_SYLLABLE_RE =
+  /^(?:ngh|ch|gh|gi|kh|ng|nh|ph|qu|th|tr|[bcdđghklmnpqrstvx])?[aăâeêioôơuưy]+(?:ch|ng|nh|[cmnpt])?$/u;
+
+function stripVietnameseTonesOnly(str) {
+  // Chuẩn hóa NFC -> bỏ thanh điệu (sắc/huyền/hỏi/ngã/nặng), giữ nguyên chất nguyên âm a/ă/â/e/ê/o/ô/ơ/u/ư
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300\u0301\u0303\u0309\u0323]/g, '')
+    .normalize('NFC');
+}
+
+function isValidVietnameseSyllable(rawToken) {
+  const token = String(rawToken || '').normalize('NFC').trim();
+  if (!token) return true;
+  // 5 luật loại trừ bắt buộc [L26]:
+  if (/\d/.test(token)) return true; // (1) chứa số (B-709, 41.9028°)
+  if (token[0] === token[0].toUpperCase() && token[0] !== token[0].toLowerCase()) return true; // (2) viết hoa đầu / tên riêng / viết hoa toàn bộ
+  if (token.length === 1 && !/^[aăâeêioôơuưyàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]$/iu.test(token)) {
+    return true; // (3) chữ cái đơn ký hiệu
+  }
+  const lower = token.toLowerCase();
+  if (PHONO_LOANWORD_WHITELIST.has(lower)) return true; // (5) từ mượn phổ thông + 'kềm'
+
+  const base = stripVietnameseTonesOnly(lower);
+  if (!/[aăâeêioôơuưy]/u.test(base)) return false; // không có nguyên âm (VD: "nh")
+  return VN_SYLLABLE_RE.test(base);
+}
+
+const KNOWN_TYPO_DENYLIST = [
+  'đá bạt',
+  'kéo sạt',
+  'chốt âm',
+  'dính chặt mắt',
+  'khoảng khoảng',
+  'li-li-mét',
+  'đạn bạc',
+  'thoảnh thoảng',
+  'băm vằn vặt',
+  'sặc nén',
+  'bọt từ tính',
+  'khói mỏng thơm mùi nhựa cháy',
+  'cold-rolled',
+  'trúng sốt run',
+  'giấy bạt cào xước',
+  'dính nếp hồ nhớt nhầy'
+];
+
+const KNOWN_TYPO_REGEXES = KNOWN_TYPO_DENYLIST.map((phrase) => ({
+  phrase,
+  re: new RegExp(`(?<![\\p{L}\\p{N}_])${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}(?![\\p{L}\\p{N}_])`, 'giu')
+}));
+
 function countLexicalIssues(text) {
-  const str = String(text || '');
+  const str = String(text || '').normalize('NFC');
   let cjk = 0;
   let enFunc = 0;
   let dup = 0;
+  let badSyllable = 0;
+  let knownTypos = 0;
   const details = [];
-  // Cắt ví dụ theo từng loại (4/3/3) để ví dụ không rỗng khi lỗi dồn một loại
-  const caps = { cjk: 4, enFunc: 3, dup: 3 };
-  const counts = { cjk: 0, enFunc: 0, dup: 0 };
+  const caps = { cjk: 4, enFunc: 3, dup: 3, badSyllable: 3, knownTypos: 3 };
+  const counts = { cjk: 0, enFunc: 0, dup: 0, badSyllable: 0, knownTypos: 0 };
   const pushDetail = (type, word, index, matchLen) => {
     if (counts[type] >= caps[type]) return;
     counts[type]++;
@@ -522,7 +589,29 @@ function countLexicalIssues(text) {
     pushDetail('dup', m[0], m.index, m[0].length);
   }
 
-  return { cjk, enFunc, dup, details };
+  // Đo phonotactics (tách mảnh theo dấu gạch nối '-' theo luật loại trừ #4)
+  for (const m of str.matchAll(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu)) {
+    const raw = m[0];
+    if (/\d/.test(raw)) continue;
+    const pieces = raw.split('-');
+    for (const piece of pieces) {
+      if (!piece || /[\u4E00-\u9FFF]/u.test(piece)) continue;
+      if (!isValidVietnameseSyllable(piece)) {
+        badSyllable++;
+        pushDetail('badSyllable', piece, m.index, raw.length);
+      }
+    }
+  }
+
+  // Đo denylist cụm nghi ngờ (chỉ đếm, không chặn/không auto-fix)
+  for (const item of KNOWN_TYPO_REGEXES) {
+    for (const m of str.matchAll(item.re)) {
+      knownTypos++;
+      pushDetail('knownTypos', m[0], m.index, m[0].length);
+    }
+  }
+
+  return { cjk, enFunc, dup, badSyllable, knownTypos, details };
 }
 
 // memory.js — hậu xử lý loại bỏ ký tự CJK, tái dùng LEXICAL_CJK_RE đã có (giữ nguyên xuống dòng \n)
@@ -546,6 +635,38 @@ function stripRawMarkdown(text) {
       return line.replace(/\*{1,2}([^\*\n]+?)\*{1,2}/g, '$1');
     })
     .join('\n');
+}
+
+// Auto-fix 11 cặp lỗi từ đã xác minh 100% — chạy sau stripCjkChars/stripRawMarkdown, trước khi lưu
+const VERIFIED_TYPO_FIXES = [
+  { re: /(?<![\p{L}\p{N}_])nhòe\s+nẹt(?![\p{L}\p{N}_])/giu, to: 'nhòe nhoẹt' },
+  { re: /(?<![\p{L}\p{N}_])rõ\s+mùng\s+một(?![\p{L}\p{N}_])/giu, to: 'rõ mồn một' },
+  { re: /(?<![\p{L}\p{N}_])rách\s+bươr(?![\p{L}\p{N}_])/giu, to: 'rách bươm' },
+  { re: /(?<![\p{L}\p{N}_])nh\s+nhụa(?![\p{L}\p{N}_])/giu, to: 'nhầy nhụa' },
+  { re: /(?<![\p{L}\p{N}_])chốm\s+chốm(?![\p{L}\p{N}_])/giu, to: 'chằm chằm' },
+  { re: /(?<![\p{L}\p{N}_])dày\s+cụm(?![\p{L}\p{N}_])/giu, to: 'dày cộm' },
+  { re: /(?<![\p{L}\p{N}_])tàn\s+tàng(?![\p{L}\p{N}_])/giu, to: 'tàn tạ' },
+  { re: /(?<![\p{L}\p{N}_])chói\s+lúa(?![\p{L}\p{N}_])/giu, to: 'chói lòa' },
+  { re: /(?<![\p{L}\p{N}_])quái\s+đái(?![\p{L}\p{N}_])/giu, to: 'quái đản' },
+  { re: /(?<![\p{L}\p{N}_])bãi\s+không\s+gian(?![\p{L}\p{N}_])/giu, to: 'bầu không gian' },
+  { re: /(?<![\p{L}\p{N}_])thì\s+thì\s+thầm(?![\p{L}\p{N}_])/giu, to: 'thì thầm' }
+];
+
+function preserveFirstCharCase(matched, replacement) {
+  if (!matched || !replacement) return replacement;
+  const first = matched[0];
+  if (first === first.toUpperCase() && first !== first.toLowerCase()) {
+    return replacement[0].toUpperCase() + replacement.slice(1);
+  }
+  return replacement;
+}
+
+function fixVerifiedLexicalTypos(text) {
+  let out = String(text || '');
+  for (const rule of VERIFIED_TYPO_FIXES) {
+    out = out.replace(rule.re, (m) => preserveFirstCharCase(m, rule.to));
+  }
+  return out;
 }
 
 // JS Style Linter chạy cục bộ (0 API call)
@@ -659,6 +780,41 @@ function lintScene(text, options = {}) {
     warnings.push(`Phát hiện từ tiếng Anh lọt vào văn xuôi (VD: ${sample}); viết lại bằng chữ Việt.`);
   }
   // Không cảnh báo lặp âm tiết: bộ đếm dup dương tính giả cao trên văn thật (từ láy hợp lệ, trùng âm tiết qua ranh giới từ) — chỉ dùng để đo.
+
+  // Chống lặp Lớp C giữa các cảnh: phát hiện cụm/từ miêu tả lặp ≥3 lần, đẩy cảnh báo vào linterNotes cho cảnh sau
+  const TIC_STOPWORDS = new Set([
+    'không', 'được', 'trong', 'ngoài', 'trên', 'dưới', 'một', 'những', 'các', 'của', 'với', 'cho', 'như',
+    'nhưng', 'rồi', 'cũng', 'vẫn', 'đang', 'đã', 'sẽ', 'lại', 'này', 'đó', 'kia', 'khi', 'nơi', 'lúc',
+    'cả', 'chỉ', 'có', 'là', 'ở', 'ra', 'vào', 'lên', 'xuống', 'đi', 'đến', 'về', 'từ', 'qua', 'theo',
+    'hắn', 'cô', 'anh', 'em', 'tôi', 'người', 'mình', 'họ', 'nó', 'ông', 'bà', 'chú', 'bác', 'cậu', 'mà', 'thì', 'và', 'hay'
+  ]);
+  const TIC_SINGLE_WATCH = ['hụm', 'phụt'];
+
+  const ticHits = [];
+  const lowerNarration = strippedQuotes.toLowerCase();
+  const wordsArr = lowerNarration.match(/[\p{L}]+/gu) || [];
+  const bigramCounts = new Map();
+  for (let wi = 0; wi < wordsArr.length - 1; wi++) {
+    const w1 = wordsArr[wi];
+    const w2 = wordsArr[wi + 1];
+    if (w1.length < 2 || w2.length < 2) continue;
+    if (TIC_STOPWORDS.has(w1) || TIC_STOPWORDS.has(w2)) continue;
+    const bg = `${w1} ${w2}`;
+    bigramCounts.set(bg, (bigramCounts.get(bg) || 0) + 1);
+  }
+  for (const [bg, cnt] of bigramCounts.entries()) {
+    if (cnt >= 3) ticHits.push({ phrase: bg, count: cnt });
+  }
+  for (const sw of TIC_SINGLE_WATCH) {
+    const cnt = (lowerNarration.match(new RegExp(`(?<![\\p{L}\\p{N}_])${sw}(?![\\p{L}\\p{N}_])`, 'giu')) || []).length;
+    if (cnt >= 3) ticHits.push({ phrase: sw, count: cnt });
+  }
+  ticHits
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2)
+    .forEach((hit) => {
+      warnings.push(`Cảnh trước lặp cụm '${hit.phrase}' (×${hit.count}); cảnh này tuyệt đối không dùng lại, đổi từ khác.`);
+    });
 
   return warnings;
 }
@@ -950,6 +1106,8 @@ window.StoryMemory = {
   countLexicalIssues,
   stripCjkChars,
   stripRawMarkdown,
+  fixVerifiedLexicalTypos,
+  isValidVietnameseSyllable,
   getL1HardCanon,
   getL2Ledger,
   saveL2Ledger,

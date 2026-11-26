@@ -353,6 +353,7 @@ ${sceneMetaParts.length ? `${sceneMetaParts.join(' | ')}\n` : ''}${chapterMetaPa
 Tóm tắt gần nhất (L3): ${l3.recentText || 'Chương mở đầu'}
 ${prevExitState ? `Trạng thái bắt buộc nối tiếp từ cảnh trước: ${prevExitState}\n` : ''}${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
 Lời thoại CHỈ viết dạng Tên: lời thoại, một câu một dòng — KHÔNG viết thoại trong ngoặc kép kiểu văn xuôi, KHÔNG đổi dạng giữa chừng.
+Ưu tiên động từ và tính từ đơn rõ nghĩa; chỉ dùng từ láy thật quen thuộc, tránh từ láy hiếm/địa phương, không chèn chữ Hán/Anh, không lặp cùng một từ láy hay tính từ miêu tả quá 2 lần trong cảnh.
 ${addressingLine ? `${addressingLine}` : ''}
 ${linterNotes.length ? `LƯU Ý SỬA PHONG CÁCH:\n- ${linterNotes.join('\n- ')}` : ''}
 ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng đúng hook đã định, không giải thích chủ đề.' : 'KHÔNG được kết thúc chương ở cảnh này, chỉ dừng ở đúng trạng thái kết cảnh để viết tiếp.'}`;
@@ -711,6 +712,9 @@ async function writeNextChapter({
           : sceneText;
         if (window.StoryMemory.stripRawMarkdown) {
           cleanSceneText = window.StoryMemory.stripRawMarkdown(cleanSceneText);
+        }
+        if (window.StoryMemory.fixVerifiedLexicalTypos) {
+          cleanSceneText = window.StoryMemory.fixVerifiedLexicalTypos(cleanSceneText);
         }
         sceneTexts.push(cleanSceneText);
         // Checkpoint ngay sau mỗi cảnh
