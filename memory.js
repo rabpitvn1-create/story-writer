@@ -537,6 +537,17 @@ function stripCjkChars(text) {
     .replace(/([("“«])[ \t]+/g, '$1');
 }
 
+// memory.js — bóc dấu * / ** Markdown inline thô nhưng GIỮ NGUYÊN dòng phân cảnh ***
+function stripRawMarkdown(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      if (/^\s*\*{3,}\s*$/.test(line)) return line;
+      return line.replace(/\*{1,2}([^\*\n]+?)\*{1,2}/g, '$1');
+    })
+    .join('\n');
+}
+
 // JS Style Linter chạy cục bộ (0 API call)
 function lintScene(text, options = {}) {
   const warnings = [];
@@ -938,6 +949,7 @@ window.StoryMemory = {
   lintScene,
   countLexicalIssues,
   stripCjkChars,
+  stripRawMarkdown,
   getL1HardCanon,
   getL2Ledger,
   saveL2Ledger,

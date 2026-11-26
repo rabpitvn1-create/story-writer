@@ -108,7 +108,7 @@ async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditF
     : '';
   const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
 
-  const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng 5.000–6.000 từ tiếng Việt) và tự kiểm tra L1/L2.
+  const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng khoảng 3.000 từ tiếng Việt — 3 cảnh, mỗi cảnh ~1.000 từ) và tự kiểm tra L1/L2.
 HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${creativity?.branchLabel || ''})
 TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
 ${creativity?.tensionNote ? `NHỊP CĂNG THẲNG: ${creativity.tensionNote}` : ''}
@@ -183,7 +183,7 @@ async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3,
   const recurringNpcText = await window.StoryMemory.lookupRecurringNpcs(sceneQuery);
   const addressingLine = window.StoryMemory.formatSceneRelationships(l2?.relationships, sceneQuery);
 
-  const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 1.800–2.000 từ tiếng Việt).
+  const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 900-1.100 từ tiếng Việt).
 Mục tiêu cảnh: ${scene.goal}
 ${prefsDirective ? `${prefsDirective}\n` : ''}Chi tiết: ${scene.beats}
 Trạng thái hiện tại (L2): ${l2Str}${recurringNpcText ? `\n${recurringNpcText}` : ''}
@@ -210,10 +210,11 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
     onUsage
   });
 
-  // Cổng kiểm số từ: thiếu dưới 1.700 từ thì viết nối tiếp cho đủ ~1.850 từ (3 cảnh x 1.700 = 5.100)
+  // Cổng kiểm số từ: chỉ cứu cụt dưới 750 từ, nối tới ~1.100 từ (cảnh ~900-1.100 từ đã xong beats thì dừng, không ép nối)
   let words = window.StoryMemory.countWords(text);
-  if (words < 1700) {
+  if (words < 750) {
     const tail = text.split(/\s+/).slice(-450).join(' ');
+    const targetMore = Math.max(300, 1100 - words);
     let firstExtraChunk = true;
     const extra = await window.RequestQueue.enqueue({
       lane: 'writer',
@@ -221,7 +222,7 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
       messages: [
         {
           role: 'user',
-          content: `Đoạn cảnh ${scene.index} mới đạt ${words} từ. Hãy viết tiếp nối ngay sau đoạn sau để bổ sung thêm ~${1850 - words} từ chi tiết giác quan, tâm lý và đối thoại (không tóm tắt vội):\n"""\n${tail}\n"""`
+          content: `Đoạn cảnh ${scene.index} mới đạt ${words} từ (bị ngắn). Chi tiết cảnh: ${scene.beats || scene.goal || ''}.\nHãy viết tiếp nối NGAY SAU đoạn dưới đây thêm khoảng ~${targetMore} từ để khép cảnh trọn vẹn (TUYỆT ĐỐI KHÔNG lặp lại sự kiện, hành động hay lời thoại đã diễn ra trước đó; không đảo ngược bối cảnh đã thiết lập):\n"""\n${tail}\n"""`
         }
       ],
       maxTokens: 2500,
@@ -241,7 +242,7 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
     text = `${text.trim()}\n\n${extra.trim()}`;
   }
 
-  const trimmed = trimToWordLimit(text, 2250);
+  const trimmed = trimToWordLimit(text, 1450);
   return trimIncompleteEnding(trimmed);
 }
 
@@ -534,9 +535,12 @@ async function writeNextChapter({
           relationships: l2?.relationships,
           sceneQuery
         });
-        const cleanSceneText = window.StoryMemory.stripCjkChars
+        let cleanSceneText = window.StoryMemory.stripCjkChars
           ? window.StoryMemory.stripCjkChars(sceneText)
           : sceneText;
+        if (window.StoryMemory.stripRawMarkdown) {
+          cleanSceneText = window.StoryMemory.stripRawMarkdown(cleanSceneText);
+        }
         sceneTexts.push(cleanSceneText);
         // Checkpoint ngay sau mỗi cảnh
         await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
