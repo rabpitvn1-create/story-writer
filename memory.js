@@ -15,13 +15,16 @@ function buildVoiceHandbook(mainChar = null) {
     'SỔ TAY GIỌNG VĂN (BẮT BUỘC):',
     povLine,
     '- Nhịp câu: Câu ngắn, gãy gọn khi căng thẳng hoặc quan sát; câu vừa phải khi độc thoại nội tâm. Tránh câu ghép dài kiểu văn dịch.',
+    '- Xen kẽ câu ngắn dứt khoát với câu dài uyển chuyển; không nối liền quá 3 câu rất ngắn (3–5 chữ).',
     '- Tả thực (Show, Don\'t Tell): Không gọi tên cảm xúc trực tiếp, hãy tả phản xạ cơ thể và chi tiết vật lý.',
     speechLine,
     misbeliefLine,
     '- Nhân vật có sẵn Ngoại hình/Trang bị trong hồ sơ thì BẮT BUỘC dùng đúng tên đồ đó, cấm tự bịa vũ khí/trang phục mới; chỗ nào hồ sơ để trống mới được tự bịa.',
+    '- Sau lần nhắc đầy đủ đầu tiên về trang bị/đạo cụ, các lần sau chỉ gọi ngắn gọn 1–2 từ, không lặp nguyên xi cụm mô tả dài.',
     '- NPC quần chúng cấm trùng tên nhân vật có sẵn, không chiếm tâm điểm.',
     '- Xưng hô đúng quan hệ/vai vế (anh/em/chú/cô/bác/ông/bà/cậu/tôi); cấm mặc định tôi-bạn/cậu-mình.',
     '- Dùng tiếng Việt chuẩn, rõ nghĩa; không tự ghép từ lạ, không chèn chữ Hán hay tiếng Anh vào văn xuôi.',
+    '- Kiểm tra từng câu: từ phải đúng nghĩa đen và đúng vật lý của cảnh; không ghép 2 cấu trúc câu làm một.',
     '- Định dạng thoại: Khi nhân vật nói, viết đúng dạng mỗi câu một dòng: Tên: lời thoại (không dùng ngoặc kép bao quanh Tên).'
   ]
     .filter(Boolean)
@@ -547,7 +550,12 @@ function lintScene(text, options = {}) {
     }
   }
 
-  const strippedQuotes = nonDialogueParts.join(' ').replace(/["“][^"”]*["”]/g, '');
+  const nonDialogueText = nonDialogueParts.join(' ');
+  const proseQuotedSpans = nonDialogueText.match(/["“][^"”]{4,}["”]/g) || [];
+  if (proseQuotedSpans.length >= 2) {
+    warnings.push('Thoại đang viết trong ngoặc kép văn xuôi — chuyển hết sang dạng Tên: lời thoại.');
+  }
+  const strippedQuotes = nonDialogueText.replace(/["“][^"”]*["”]/g, '');
   if (/(?<![\p{L}\p{N}_])(tôi|mình)(?![\p{L}\p{N}_])/iu.test(strippedQuotes)) {
     warnings.push('Phát hiện đại từ ngôi thứ nhất ("tôi/mình") trong đoạn trần thuật; giữ chặt ngôi thứ ba.');
   }

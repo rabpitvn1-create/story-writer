@@ -885,6 +885,19 @@ body {
   cursor: not-allowed;
 }
 
+/* Nút điều hướng bị khóa khi đang viết: mờ rõ để người dùng thấy là không bấm được */
+button:disabled,
+.btn:disabled,
+.nav-btn:disabled,
+.primary-btn:disabled,
+.secondary-btn:disabled,
+.danger-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  pointer-events: none;
+  filter: grayscale(0.25);
+}
+
 .chapter-title-btn {
   border: none;
   background: transparent;

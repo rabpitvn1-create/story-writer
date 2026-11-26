@@ -622,6 +622,8 @@ const StreamRenderer = {
   queueTokens: [],       // Mảng từ chờ nhả dần khi proxy trả 1 cục lớn
   pendingLine: '',       // Dòng đang gõ dở (chưa gặp \n)
   sceneReceivedText: false,
+  currentDisplayScene: 0, // Cảnh typewriter đang hiển thị (Dừng khẩn chỉ xả tới đây)
+  lastEnqueuedScene: 0,   // Cảnh mới nhất đã đẩy vào hàng đợi
   typeTimer: null,
   sseThrottleTimer: null,
   ssePendingChunk: '',
@@ -746,6 +748,8 @@ const StreamRenderer = {
     this.pendingLine = '';
     this.ssePendingChunk = '';
     this.sceneReceivedText = false;
+    this.currentDisplayScene = existingScenes.length;
+    this.lastEnqueuedScene = existingScenes.length;
 
     if (typeof showEmptyStartScreen === 'function') showEmptyStartScreen(false);
     document.getElementById('chapter-title').textContent = `CHAPTER ${chapterNumber}`;
@@ -771,9 +775,17 @@ const StreamRenderer = {
   },
 
   // Nhận chunk từ onToken: tự phân biệt cục lớn (proxy) vs chunk nhỏ (SSE thật)
-  pushChunk(chunk) {
+  pushChunk(chunk, sceneIndex = 0) {
     if (!this.active || !chunk) return;
     this.sceneReceivedText = true;
+
+    // FIX-STOP: đánh dấu ranh giới cảnh trong hàng đợi (vòng lặp chương chạy trước typewriter,
+    // cảnh sau có thể đã fetch xong trong khi cảnh hiện tại vẫn đang chạy chữ)
+    const idx = Number.isInteger(sceneIndex) ? sceneIndex : this.lastEnqueuedScene;
+    if (idx > this.lastEnqueuedScene) {
+      this.queueTokens.push({ __sceneBreak: true, sceneIndex: idx });
+      this.lastEnqueuedScene = idx;
+    }
 
     if (chunk.length > 120) {
       // Proxy non-streaming trả về cả cục -> tách thành từng từ + khoảng trắng/xuống dòng để nhả dần
@@ -798,14 +810,28 @@ const StreamRenderer = {
   startTypewriter() {
     if (this.typeTimer) return;
     this.typeTimer = setInterval(() => {
+      // Bỏ qua marker ranh giới cảnh ở đầu hàng đợi, cập nhật cảnh đang hiển thị
+      while (this.queueTokens.length > 0 && typeof this.queueTokens[0] === 'object' && this.queueTokens[0].__sceneBreak) {
+        this.currentDisplayScene = this.queueTokens.shift().sceneIndex;
+      }
       if (this.queueTokens.length === 0) {
         clearInterval(this.typeTimer);
         this.typeTimer = null;
         this.skipBtn?.classList.add('hidden');
         return;
       }
-      const step = this.queueTokens.splice(0, TYPEWRITER_WORDS_PER_TICK).join('');
-      this.feedText(step);
+      // Lấy tối đa N từ (bỏ qua marker nếu lọt vào giữa đợt lấy, tránh "[object Object]" lọt ra màn hình)
+      const step = [];
+      while (step.length < TYPEWRITER_WORDS_PER_TICK && this.queueTokens.length > 0) {
+        const next = this.queueTokens[0];
+        if (typeof next === 'object' && next.__sceneBreak) {
+          this.currentDisplayScene = next.sceneIndex;
+          this.queueTokens.shift();
+          continue;
+        }
+        step.push(this.queueTokens.shift());
+      }
+      if (step.length > 0) this.feedText(step.join(''));
     }, TYPEWRITER_TICK_MS);
   },
 
@@ -845,7 +871,8 @@ const StreamRenderer = {
       this.ssePendingChunk = '';
     }
     if (this.queueTokens.length > 0) {
-      remaining += this.queueTokens.join('');
+      // Bỏ qua marker ranh giới cảnh (object) khi nối chuỗi, tránh "[object Object]" lọt ra màn hình
+      remaining += this.queueTokens.filter((t) => typeof t === 'string').join('');
       this.queueTokens = [];
     }
     if (remaining) this.feedText(remaining);
@@ -858,10 +885,36 @@ const StreamRenderer = {
     this.skipBtn?.classList.add('hidden');
   },
 
-  onSceneDone(sceneText) {
+  // Dừng khẩn: chỉ xả chữ còn đợi của cảnh ĐANG hiện, hủy chữ của các cảnh sau đã fetch trước
+  flushCurrentSceneOnly() {
+    this.stopTimers();
+    this.stopSwitchTimer?.();
+    // Hủy batch SSE đang chờ (có thể thuộc cảnh sau; cùng lắm mất vài từ của cảnh hiện tại, đã lưu trong bản nháp)
+    this.ssePendingChunk = '';
+    let remainingText = '';
+    while (this.queueTokens.length > 0) {
+      const item = this.queueTokens.shift();
+      if (typeof item === 'object' && item.__sceneBreak && item.sceneIndex > this.currentDisplayScene) {
+        break;
+      }
+      if (typeof item === 'string') remainingText += item;
+    }
+    this.queueTokens = [];
+    if (remainingText) this.feedText(remainingText);
+
+    // Chốt nốt dòng cuối dở dang thành block chuẩn
+    if (this.pendingLine.trim()) {
+      this.feedText('\n');
+    }
+    if (this.tailEl) this.tailEl.textContent = '';
+    this.skipBtn?.classList.add('hidden');
+    this.followBtn?.classList.add('hidden');
+  },
+
+  onSceneDone(sceneText, sceneIndex = 0) {
     // Dự phòng nếu non-streaming không bắn onToken nào
     if (!this.sceneReceivedText && sceneText) {
-      this.pushChunk(sceneText);
+      this.pushChunk(sceneText, sceneIndex);
     }
     // Chốt sạch cảnh nếu đang SSE; nếu đang typewriter chậm rãi thì để người đọc đọc tiếp
     // (cảnh kế tiếp sẽ nối vào queueTokens ngay sau cảnh hiện tại, không bị mất chữ)
@@ -1308,6 +1361,16 @@ async function restoreLastStoryBackup() {
   await window.StoryDB.db.chapters.bulkPut(snap.chapters);
   if (snap.summaries?.length) await window.StoryDB.db.summaries.bulkPut(snap.summaries);
   if (snap.ledger?.length) await window.StoryDB.db.ledger.bulkPut(snap.ledger);
+  // FIX-LEAK: bản backup mới có cả codex — chỉ chạm nhân vật/luật khi snapshot có chúng (backup cũ không có thì giữ nguyên codex hiện tại)
+  if (snap.characters) {
+    await window.StoryDB.db.characters.clear();
+    if (snap.characters.length) await window.StoryDB.db.characters.bulkPut(snap.characters);
+  }
+  if (snap.worldRules) {
+    await window.StoryDB.db.worldRules.clear();
+    if (snap.worldRules.length) await window.StoryDB.db.worldRules.bulkPut(snap.worldRules);
+  }
+  if (snap.characters || snap.worldRules) await syncCodexFromDB();
   await loadAndRenderLatestChapter();
 }
 
@@ -1501,6 +1564,9 @@ function setupEvents(settings) {
     }
     if (state.type === 'budget') {
       document.getElementById('budget-display').textContent = `${state.used}/${state.cap} calls hôm nay`;
+      // FIX-COUNTER: vẽ lại danh sách pool (requestsToday từng proxy) khi modal Cài đặt đang mở
+      const settingsModalEl = document.getElementById('settings-modal');
+      if (settingsModalEl && !settingsModalEl.classList.contains('hidden')) refreshSettingsUI();
     } else if (state.type === 'all_cooldown') {
       startCooldownBanner(state.resumeAt);
       refreshSettingsUI();
@@ -1565,11 +1631,11 @@ function setupEvents(settings) {
       onOutlineReady: (_chNum, title) => {
         StreamRenderer.setChapterSubtitle(title);
       },
-      onSceneStream: (chunk) => {
-        StreamRenderer.pushChunk(chunk);
+      onSceneStream: (chunk, _full, sceneIdx) => {
+        StreamRenderer.pushChunk(chunk, sceneIdx);
       },
       onSceneDone: (_sceneIdx, sceneText) => {
-        StreamRenderer.onSceneDone(sceneText);
+        StreamRenderer.onSceneDone(sceneText, _sceneIdx);
       },
       onAborted: (sceneNum, totalScenes) => {
         StreamRenderer.showPauseNote(sceneNum, totalScenes);
@@ -1609,7 +1675,7 @@ function setupEvents(settings) {
   });
 
   document.getElementById('hard-stop-btn').addEventListener('click', () => {
-    StreamRenderer.flushAll(); // Xả nốt chữ cảnh đang chạy typewriter trước khi ngắt mạng
+    StreamRenderer.flushCurrentSceneOnly(); // Dừng khẩn: chỉ xả cảnh đang hiện, hủy chữ các cảnh sau đã fetch trước
     if (window.EndlessManager) window.EndlessManager.stopEndlessHard();
     else window.ChapterEngine.hardStop();
   });
@@ -1648,11 +1714,11 @@ function setupEvents(settings) {
       onOutlineReady: (_chNum, title) => {
         StreamRenderer.setChapterSubtitle(title);
       },
-      onSceneStream: (chunk) => {
-        StreamRenderer.pushChunk(chunk);
+      onSceneStream: (chunk, _full, sceneIdx) => {
+        StreamRenderer.pushChunk(chunk, sceneIdx);
       },
       onSceneDone: (_sceneIdx, sceneText) => {
-        StreamRenderer.onSceneDone(sceneText);
+        StreamRenderer.onSceneDone(sceneText, _sceneIdx);
       },
       onAborted: (sceneNum, totalScenes) => {
         StreamRenderer.showPauseNote(sceneNum, totalScenes);
@@ -1703,28 +1769,41 @@ function setupEvents(settings) {
     if (!ok) return;
 
     // Snapshot 1 bản mới nhất vào settings trước khi xóa (chỉ giữ 1 bản; dữ liệu đã mất trước đó không khôi phục được)
-    const [chapters, summaries, ledger] = await Promise.all([
+    // FIX-LEAK: backup cả characters + worldRules (không chỉ chương/sổ cái) để Khôi phục trả lại đủ truyện
+    const [chapters, summaries, ledger, characters, worldRules] = await Promise.all([
       window.StoryDB.db.chapters.toArray(),
       window.StoryDB.db.summaries.toArray(),
-      window.StoryDB.db.ledger.toArray()
+      window.StoryDB.db.ledger.toArray(),
+      window.StoryDB.db.characters.toArray(),
+      window.StoryDB.db.worldRules.toArray()
     ]);
     if (chapters.length > 0) {
       await window.StoryDB.setSetting('last_story_backup', {
         chapters,
         summaries,
         ledger,
+        characters,
+        worldRules,
         savedAt: Date.now()
       });
     }
 
+    // FIX-LEAK: xóa cả nhân vật + luật thế giới (trước đây chỉ xóa chương/sổ cái nên truyện cũ vẫn chui vào dàn ý mới qua L1)
     await Promise.all([
       window.StoryDB.db.chapters.clear(),
       window.StoryDB.db.summaries.clear(),
       window.StoryDB.db.ledger.clear(),
+      window.StoryDB.db.characters.clear(),
+      window.StoryDB.db.worldRules.clear(),
       window.StoryDB.setSetting('chapter_draft', null),
       window.StoryDB.setSetting('recent_motifs', []),
-      window.StoryDB.setSetting('checkpoint', null)
+      window.StoryDB.setSetting('checkpoint', null),
+      window.StoryDB.setSetting('pruned_npcs_backup', [])
     ]);
+    // Xóa luôn seed codex cũ trong localStorage (chỉ đọc 1 lần lúc khởi động, đã migrate sang DB)
+    try { localStorage.removeItem(CODEX_KEY); } catch { /* bỏ qua */ }
+    // Đồng bộ lại codex RAM + Drawer + thẻ màn bắt đầu từ DB (đã trống)
+    await syncCodexFromDB();
     settingsModal.classList.add('hidden');
     await loadAndRenderLatestChapter();
   });

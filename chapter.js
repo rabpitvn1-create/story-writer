@@ -165,6 +165,7 @@ ${prefsDirective ? `${prefsDirective}\n` : ''}Chi tiết: ${scene.beats}
 Trạng thái hiện tại (L2): ${l2Str}${recurringNpcText ? `\n${recurringNpcText}` : ''}
 Tóm tắt gần nhất (L3): ${l3.recentText || 'Chương mở đầu'}
 ${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
+Lời thoại CHỈ viết dạng Tên: lời thoại, một câu một dòng — KHÔNG viết thoại trong ngoặc kép kiểu văn xuôi, KHÔNG đổi dạng giữa chừng.
 ${addressingLine ? `${addressingLine}` : ''}
 ${linterNotes.length ? `LƯU Ý SỬA PHONG CÁCH:\n- ${linterNotes.join('\n- ')}` : ''}
 ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư âm hoặc móc nối mở.' : 'KHÔNG được kết thúc chương ở cảnh này, chỉ dừng ở điểm chuyển cảnh tự nhiên.'}`;
