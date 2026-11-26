@@ -1611,6 +1611,8 @@ function setupEvents(settings) {
     writeBtn.disabled = true;
     document.getElementById('endless-start-btn').disabled = true;
     document.getElementById('goto-next-chapter-btn').disabled = true;
+    document.getElementById('prev-chapter-btn').disabled = true;
+    document.getElementById('next-chapter-btn').disabled = true;
     document.getElementById('suggest-next-btn').disabled = true;
     if (startWriteBtn) startWriteBtn.disabled = true;
     ch1Input.disabled = true;
@@ -1658,6 +1660,8 @@ function setupEvents(settings) {
       writeBtn.disabled = false;
       document.getElementById('endless-start-btn').disabled = false;
       document.getElementById('goto-next-chapter-btn').disabled = false;
+      document.getElementById('prev-chapter-btn').disabled = false;
+      document.getElementById('next-chapter-btn').disabled = false;
       document.getElementById('suggest-next-btn').disabled = false;
       if (startWriteBtn) startWriteBtn.disabled = false;
       ch1Input.disabled = false;
@@ -1695,6 +1699,8 @@ function setupEvents(settings) {
     writeBtn.disabled = true;
     endlessBtn.disabled = true;
     document.getElementById('goto-next-chapter-btn').disabled = true;
+    document.getElementById('prev-chapter-btn').disabled = true;
+    document.getElementById('next-chapter-btn').disabled = true;
     document.getElementById('suggest-next-btn').disabled = true;
     if (startWriteBtn) startWriteBtn.disabled = true;
     ch1Input.disabled = true;
@@ -1738,6 +1744,8 @@ function setupEvents(settings) {
         writeBtn.disabled = false;
         endlessBtn.disabled = false;
         document.getElementById('goto-next-chapter-btn').disabled = false;
+        document.getElementById('prev-chapter-btn').disabled = false;
+        document.getElementById('next-chapter-btn').disabled = false;
         document.getElementById('suggest-next-btn').disabled = false;
         if (startWriteBtn) startWriteBtn.disabled = false;
         ch1Input.disabled = false;
