@@ -27,6 +27,30 @@ function trimToWordLimit(text, maxWords = 2250) {
   return lastPeriod > sliced.length * 0.7 ? sliced.slice(0, lastPeriod + 1) : sliced;
 }
 
+// chapter.js — cắt lùi về dấu kết câu gần nhất nếu model tự dừng giữa câu (chỉ cắt khi nằm sau 70% văn bản)
+function trimIncompleteEnding(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+  if (/[.!?…]["”»)]*$/u.test(clean)) return clean;
+
+  const lastIdx = Math.max(
+    clean.lastIndexOf('.'),
+    clean.lastIndexOf('!'),
+    clean.lastIndexOf('?'),
+    clean.lastIndexOf('…')
+  );
+  if (lastIdx <= 0) return clean;
+
+  let cutPos = lastIdx + 1;
+  while (cutPos < clean.length && /["”»)]/.test(clean[cutPos])) {
+    cutPos++;
+  }
+  if (cutPos > clean.length * 0.7) {
+    return clean.slice(0, cutPos).trim();
+  }
+  return clean;
+}
+
 async function getStoryPrefsDirective() {
   const prefs = await window.StoryDB.getSetting('storyPrefs', null);
   if (!prefs) return '';
@@ -217,7 +241,8 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư 
     text = `${text.trim()}\n\n${extra.trim()}`;
   }
 
-  return trimToWordLimit(text, 2250);
+  const trimmed = trimToWordLimit(text, 2250);
+  return trimIncompleteEnding(trimmed);
 }
 
 async function digestChapter(chapterNumber, fullText, l2, signal, onUsage = null) {
@@ -504,15 +529,18 @@ async function writeNextChapter({
 
       // Cảnh rỗng thì không lưu — lần chạy sau sẽ viết lại đúng cảnh đó
       if (sceneText && sceneText.trim()) {
-        sceneTexts.push(sceneText);
         linterNotes = window.StoryMemory.lintScene(sceneText, {
           mainChar,
           relationships: l2?.relationships,
           sceneQuery
         });
+        const cleanSceneText = window.StoryMemory.stripCjkChars
+          ? window.StoryMemory.stripCjkChars(sceneText)
+          : sceneText;
+        sceneTexts.push(cleanSceneText);
         // Checkpoint ngay sau mỗi cảnh
         await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
-        if (onSceneDone) onSceneDone(i, sceneText);
+        if (onSceneDone) onSceneDone(i, cleanSceneText);
       }
       // Dừng nhẹ: dừng sau cảnh vừa viết xong, hoàn tất chương với các cảnh đã có
       if (gracefulStopRequested) break;

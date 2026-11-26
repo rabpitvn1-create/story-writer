@@ -525,6 +525,18 @@ function countLexicalIssues(text) {
   return { cjk, enFunc, dup, details };
 }
 
+// memory.js — hậu xử lý loại bỏ ký tự CJK, tái dùng LEXICAL_CJK_RE đã có (giữ nguyên xuống dòng \n)
+function stripCjkChars(text) {
+  const str = String(text || '');
+  if (!LEXICAL_CJK_RE.test(str)) return str;
+  LEXICAL_CJK_RE.lastIndex = 0;
+  return str
+    .replace(LEXICAL_CJK_RE, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([.,!?;:…)""»])/g, '$1')
+    .replace(/([("“«])[ \t]+/g, '$1');
+}
+
 // JS Style Linter chạy cục bộ (0 API call)
 function lintScene(text, options = {}) {
   const warnings = [];
@@ -925,6 +937,7 @@ window.StoryMemory = {
   retrieveDynamicCanon,
   lintScene,
   countLexicalIssues,
+  stripCjkChars,
   getL1HardCanon,
   getL2Ledger,
   saveL2Ledger,
