@@ -72,11 +72,40 @@ function verifyOutlineCanon(parsed, l1, l2, isSeedMode = false) {
     errors.push('Thiếu trường bắt buộc canonCheck trong dàn ý.');
     return errors;
   }
-  if (Array.isArray(check.deadMentioned) && check.deadMentioned.length > 0) {
-    errors.push(`Dàn ý tự báo có nhắc nhân vật đã chết: ${check.deadMentioned.join(', ')}.`);
+
+  // 1. Chỉ báo lỗi người chết khi họ xuất hiện trong characters (có mặt trực tiếp), KHÔNG báo oan khi chỉ ở mentions
+  const deadList = Array.isArray(l2?.deadCharacters) ? l2.deadCharacters.filter(Boolean) : [];
+  const presentChars = Array.isArray(check.characters) ? check.characters.map((s) => String(s || '').trim().toLowerCase()) : [];
+  const mentionedChars = new Set(
+    (Array.isArray(check.mentions) ? check.mentions : []).map((s) => String(s || '').trim().toLowerCase())
+  );
+  for (const dead of deadList) {
+    const dl = String(dead).trim().toLowerCase();
+    if (dl && presentChars.includes(dl)) {
+      errors.push(`Nhân vật đã chết "${dead}" xuất hiện trực tiếp trong canonCheck.characters.`);
+    }
   }
+  // Tương thích ngược: nếu model tự ghi deadMentioned mà không nằm trong mentions
+  if (Array.isArray(check.deadMentioned)) {
+    for (const dm of check.deadMentioned) {
+      const dml = String(dm || '').trim().toLowerCase();
+      if (dml && !mentionedChars.has(dml)) {
+        errors.push(`Dàn ý đưa nhân vật đã chết "${dm}" trở lại ngoài hồi tưởng.`);
+      }
+    }
+  }
+
+  // 2. Đồ đã mất
   if (Array.isArray(check.lostItemsUsed) && check.lostItemsUsed.length > 0) {
-    errors.push(`Dàn ý tự báo có dùng vật phẩm đã mất: ${check.lostItemsUsed.join(', ')}.`);
+    errors.push(`Dàn ý dùng lại đồ đã mất: ${check.lostItemsUsed.join(', ')}.`);
+  } else if (Array.isArray(l2?.lostItems) && l2.lostItems.length > 0 && Array.isArray(parsed?.scenes)) {
+    const sceneBlob = parsed.scenes.map((s) => `${s.goal || ''} ${s.beats || ''}`).join(' ').toLowerCase();
+    for (const item of l2.lostItems) {
+      const il = String(item).trim().toLowerCase();
+      if (il.length >= 4 && sceneBlob.includes(il) && !mentionedChars.has(il)) {
+        errors.push(`Dàn ý có dấu hiệu dùng lại đồ đã mất "${item}".`);
+      }
+    }
   }
 
   // factsUsed phải là substring thật của L1 hoặc L2; Seed Mode bỏ qua (l1 mặc định 1 dòng, model dễ lệch vài ký tự)
@@ -92,7 +121,94 @@ function verifyOutlineCanon(parsed, l1, l2, isSeedMode = false) {
       }
     }
   }
+
+  // 3. Kiểm tra nhịp outcome, hook và nối tiếp exitState (chỉ chạy khi có scenes)
+  const scenes = Array.isArray(parsed?.scenes) ? parsed.scenes : [];
+  if (scenes.length > 0) {
+    const outcomes = scenes.map((s) => String(s?.outcome || '').trim().toLowerCase()).filter(Boolean);
+    if (scenes.length >= 3 && outcomes.length === scenes.length && outcomes.every((o) => o === 'yes')) {
+      errors.push('Cả 3 cảnh đều có outcome "yes" (thiếu áp lực); đổi ít nhất 1 cảnh sang "yes-but" hoặc "no-and".');
+    }
+
+    // Hook thiếu thì KHÔNG lỗi cứng: prompt đã yêu cầu, normalizeOutlineData cho fallback rỗng,
+    // prompt cảnh bỏ qua hook khi rỗng — làm fail-closed ở đây sẽ vỡ chương khi model bỏ sót hook.
+    // (Chỉ kiểm nhịp outcome khi model đã trả đủ outcome cho cả 3 cảnh — xem trên.)
+
+    for (let i = 0; i < scenes.length - 1; i++) {
+      const prevExit = String(scenes[i]?.exitState || '').trim();
+      const nextText = `${scenes[i + 1]?.goal || ''} ${scenes[i + 1]?.beats || ''}`.trim();
+      if (prevExit.length >= 8 && !nextText) {
+        errors.push(`Cảnh ${i + 2} chưa có nội dung nối tiếp từ exitState của Cảnh ${i + 1}.`);
+      }
+      // Bắt lỗi ngược bối cảnh hiển nhiên: cảnh i rời khỏi nơi X nhưng cảnh i+1 vẫn mở trong nơi X
+      const leftMatch = prevExit.match(/rời(?:\s+khỏi)?\s+([^\.,;]{3,28})/iu);
+      if (leftMatch && nextText) {
+        const place = leftMatch[1].trim().toLowerCase();
+        const nextFirst = nextText.slice(0, 120).toLowerCase();
+        if (place.length >= 4 && (nextFirst.includes(`trong ${place}`) || nextFirst.includes(`tại ${place}`))) {
+          errors.push(`Cảnh ${i + 2} có dấu hiệu quay ngược lại "${leftMatch[1].trim()}" dù exitState Cảnh ${i + 1} đã rời đi.`);
+        }
+      }
+    }
+  }
+
   return errors;
+}
+
+// chapter.js — chuẩn hóa outline mới với JS fallback an toàn (giữ scene.beats dạng chuỗi để mọi caller cũ không vỡ)
+const VALID_OUTCOMES = new Set(['yes', 'no', 'yes-but', 'no-and']);
+const VALID_HOOK_TYPES = new Set(['cliffhanger', 'question', 'revelation', 'reversal', 'decision', 'emotional', 'resolution']);
+
+function normalizeOutlineData(rawOutline) {
+  if (!rawOutline || typeof rawOutline !== 'object') return rawOutline;
+  const out = { ...rawOutline };
+  out.threads = typeof out.threads === 'string' ? out.threads.trim() : '';
+  out.anchors = typeof out.anchors === 'string' ? out.anchors.trim() : '';
+  out.unsaid = typeof out.unsaid === 'string' ? out.unsaid.trim() : '';
+
+  if (out.hook && typeof out.hook === 'object') {
+    const hType = String(out.hook.type || '').trim().toLowerCase();
+    out.hook = {
+      type: VALID_HOOK_TYPES.has(hType) ? hType : 'question',
+      line: String(out.hook.line || '').trim()
+    };
+  } else if (typeof out.hook === 'string' && out.hook.trim()) {
+    out.hook = { type: 'question', line: out.hook.trim() };
+  } else {
+    out.hook = { type: '', line: '' };
+  }
+
+  if (out.canonCheck && typeof out.canonCheck === 'object') {
+    out.canonCheck = {
+      characters: Array.isArray(out.canonCheck.characters) ? out.canonCheck.characters : [],
+      mentions: Array.isArray(out.canonCheck.mentions) ? out.canonCheck.mentions : [],
+      deadMentioned: Array.isArray(out.canonCheck.deadMentioned) ? out.canonCheck.deadMentioned : [],
+      lostItemsUsed: Array.isArray(out.canonCheck.lostItemsUsed) ? out.canonCheck.lostItemsUsed : [],
+      factsUsed: Array.isArray(out.canonCheck.factsUsed) ? out.canonCheck.factsUsed : []
+    };
+  }
+
+  if (Array.isArray(out.scenes)) {
+    out.scenes = out.scenes.map((sc, idx) => {
+      const s = sc && typeof sc === 'object' ? { ...sc } : {};
+      s.index = Number(s.index) || idx + 1;
+      s.goal = String(s.goal || '').trim();
+      if (Array.isArray(s.beats)) {
+        s.beatList = s.beats.map((b) => String(b || '').trim()).filter(Boolean);
+        s.beats = s.beatList.map((b, bi) => `${bi + 1}. ${b}`).join(' ');
+      } else {
+        s.beats = String(s.beats || '').trim();
+        s.beatList = s.beats ? [s.beats] : [];
+      }
+      const oc = String(s.outcome || '').trim().toLowerCase();
+      s.outcome = VALID_OUTCOMES.has(oc) ? oc : '';
+      s.tension = String(s.tension || '').trim();
+      s.exitState = String(s.exitState || '').trim();
+      s.povBlindspot = String(s.povBlindspot || '').trim();
+      return s;
+    });
+  }
+  return out;
 }
 
 async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditFixNote = '', creativity = null, userDirection = '', prefsDirective = '', onUsage = null, isSeedMode = false, auditRound = 0) {
@@ -108,34 +224,69 @@ async function generateOutline(chapterNumber, l1, l2, l3, l4Hits, signal, auditF
     : '';
   const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
 
-  const prompt = `Lập dàn ý 3 cảnh lớn cho Chương ${chapterNumber} (mục tiêu tổng khoảng 3.000 từ tiếng Việt — 3 cảnh, mỗi cảnh ~1.000 từ) và tự kiểm tra L1/L2.
+  const prompt = `Lập dàn ý gọn-nhưng-chắc cho Chương ${chapterNumber} (mục tiêu tổng: khoảng 3.000 từ tiếng Việt, chia đúng 3 cảnh, mỗi cảnh ~900-1.100 từ).
+${prefsDirective ? `${prefsDirective}\n` : ''}${userDirection ? `Gợi ý hướng đi từ tác giả: ${userDirection}\n` : ''}${auditFixNote ? `BẮT BUỘC SỬA LỖI DÀN Ý LẦN TRƯỚC:\n${auditFixNote}\n` : ''}
 HƯỚNG CỐT TRUYỆN ĐƯỢC CHỌN: ${creativity?.branch || 'twist'} (${creativity?.branchLabel || ''})
 TRÁNH LẶP MOTIF ĐÃ DÙNG GẦN ĐÂY: ${recentMotifsText}
 ${creativity?.tensionNote ? `NHỊP CĂNG THẲNG: ${creativity.tensionNote}` : ''}
-${userDirection ? `GỢI Ý CỦA NGƯỜI VIẾT (ưu tiên cao nhất, dàn ý phải bám sát gợi ý này): ${userDirection}` : ''}
-${prefsDirective ? `${prefsDirective}\n` : ''}
-${auditFixNote ? `SỬA LỖI VI PHẠM CANON TRƯỚC ĐÓ: ${auditFixNote}` : ''}
 ${seedBlock}
 Được phép tạo NPC quần chúng cho bối cảnh sống động nhưng cấm trùng tên với nhân vật đã có.
-Trả về JSON thuần:
-{
-  "title": "Tên chương ngắn",
-  "branch": "${creativity?.branch || 'twist'}",
-  "motif": { "conflict": "sinh tồn/tâm lý/giải đố/gặp gỡ", "environment": "mô tả ngắn bối cảnh" },
-  "scenes": [
-    { "index": 1, "goal": "Mở đầu & khám phá", "beats": "Chi tiết" },
-    { "index": 2, "goal": "Biến cố & cao trào", "beats": "Chi tiết" },
-    { "index": 3, "goal": "Dư âm & móc nối", "beats": "Chi tiết" }
-  ],
-  "canonCheck": {
-    "deadMentioned": [],
-    "lostItemsUsed": [],
-    "factsUsed": ["trích nguyên văn <=100 ký tự từ L1 hoặc L2 làm căn cứ cho dàn ý"]
-  }
-}
 L2: ${l2Str}
 L3: ${l3.arcsText}\n${l3.recentText}
-L4: ${l4Text || 'Không có'}`;
+L4: ${l4Text || 'Không có'}
+
+LUẬT CẤU TRÚC BẮT BUỘC:
+- Cấm giải thích toạc chủ đề hay rút bài học cuối cảnh/chương (ý nghĩa ngầm ghi ở "unsaid" và KHÔNG viết vào văn xuôi).
+- Cấm giải quyết nút thắt bằng "nhân vật bỗng ngộ ra"; phải giải quyết bằng hành động hoặc quyết định có cái giá cụ thể.
+- Giữ vùng xám đạo đức & chi tiết bỏ lửng; trong 3 cảnh PHẢI có ít nhất 1 cảnh có outcome là "yes-but" hoặc "no-and".
+- Cảnh i+1 phải nối tiếp trực tiếp từ exitState của Cảnh i (không nhảy ngược bối cảnh).
+
+Trả về ĐÚNG 1 JSON hợp lệ (KHÔNG giải thích thêm):
+{
+  "title": "Tiêu đề chương ngắn gọn, gợi hình",
+  "branch": "${creativity?.branch || 'twist'}",
+  "motif": { "conflict": "sinh tồn/tâm lý/giải đố/gặp gỡ", "environment": "mô tả ngắn bối cảnh" },
+  "threads": "1 câu: tuyến thứ hai chạy song song hoặc tạo ma sát ngược tuyến chính",
+  "anchors": "2-3 neo cụ thể (tên đường, quán, vật dụng, mốc năm thật đúng bối cảnh)",
+  "unsaid": "1 câu ý nghĩa ngầm sẽ KHÔNG viết thẳng ra trong văn xuôi",
+  "hook": { "type": "cliffhanger|question|revelation|reversal|decision|emotional|resolution", "line": "1 câu cụ thể khép chương" },
+  "scenes": [
+    {
+      "index": 1,
+      "goal": "1 câu: nhân vật chính muốn gì vs thứ cản lại (Cảnh 1 mở thẳng giữa tình huống)",
+      "beats": ["Beat 1 (1 câu)", "Beat 2 do beat 1 gây ra (1 câu)", "Beat 3 dẫn tới hệ quả (1 câu)"],
+      "outcome": "yes-but",
+      "tension": "5 - tăng",
+      "exitState": "1 câu: kết cảnh ở đâu, cùng ai, trạng thái gì vừa đổi",
+      "povBlindspot": "(tùy chọn) điều nhân vật chính chưa biết trong cảnh này"
+    },
+    {
+      "index": 2,
+      "goal": "1 câu: biến cố đẩy cao trào",
+      "beats": ["Beat 1 (1 câu)", "Beat 2 do beat 1 gây ra (1 câu)", "Beat 3 dẫn tới hệ quả (1 câu)"],
+      "outcome": "no-and",
+      "tension": "8 - đỉnh",
+      "exitState": "1 câu: kết cảnh ở đâu, cùng ai, trạng thái gì vừa đổi",
+      "povBlindspot": "(tùy chọn) điều nhân vật chính chưa biết trong cảnh này"
+    },
+    {
+      "index": 3,
+      "goal": "1 câu: dư âm & móc nối mở",
+      "beats": ["Beat 1 (1 câu)", "Beat 2 do beat 1 gây ra (1 câu)", "Beat 3 dẫn tới hệ quả (1 câu)"],
+      "outcome": "yes-but",
+      "tension": "6 - dư âm",
+      "exitState": "1 câu: kết cảnh ở đâu, cùng ai, trạng thái gì vừa đổi",
+      "povBlindspot": "(tùy chọn) điều nhân vật chính chưa biết trong cảnh này"
+    }
+  ],
+  "canonCheck": {
+    "characters": ["tên nhân vật CÓ MẶT trực tiếp trong chương"],
+    "mentions": ["tên nhân vật chỉ được nhắc tên hoặc hồi tưởng"],
+    "deadMentioned": [],
+    "lostItemsUsed": [],
+    "factsUsed": ["2-3 chi tiết trích nguyên văn từ L1 hoặc L2 làm căn cứ"]
+  }
+}`;
 
   // Free-tier hay trả JSON bị cắt: thử lại 1 lần rồi mới báo lỗi thân thiện
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -155,6 +306,7 @@ L4: ${l4Text || 'Không có'}`;
     try {
       const cleaned = raw.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
       outline = JSON.parse(cleaned);
+      outline = normalizeOutlineData(outline);
       if (!outline || !Array.isArray(outline.scenes) || outline.scenes.length === 0) {
         throw new Error('Dàn ý thiếu danh sách cảnh.');
       }
@@ -175,7 +327,7 @@ L4: ${l4Text || 'Không có'}`;
   }
 }
 
-async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, linterNotes, signal, onProgress, onChunk, prefsDirective = '', onUsage = null, mainChar = null }) {
+async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3, rollingTail, prevExitState = '', outlineMeta = null, linterNotes, signal, onProgress, onChunk, prefsDirective = '', onUsage = null, mainChar = null }) {
   const systemPrompt = `${l1}\n\n${window.StoryMemory.buildVoiceHandbook(mainChar)}\n\n${window.StoryMemory.buildVoiceAnchors(mainChar)}`;
   const isLast = scene.index === totalScenes;
   const l2Str = await window.StoryMemory.serializeL2ForPrompt(l2);
@@ -183,16 +335,27 @@ async function writeSingleScene({ chapterNumber, scene, totalScenes, l1, l2, l3,
   const recurringNpcText = await window.StoryMemory.lookupRecurringNpcs(sceneQuery);
   const addressingLine = window.StoryMemory.formatSceneRelationships(l2?.relationships, sceneQuery);
 
+  const sceneMetaParts = [];
+  if (scene.outcome) sceneMetaParts.push(`Kết cục cảnh: ${scene.outcome}`);
+  if (scene.tension) sceneMetaParts.push(`Nhịp căng: ${scene.tension}`);
+  if (scene.povBlindspot) sceneMetaParts.push(`Điểm mù POV (chưa biết): ${scene.povBlindspot}`);
+  if (scene.exitState) sceneMetaParts.push(`Trạng thái kết cảnh bắt buộc: ${scene.exitState}`);
+
+  const chapterMetaParts = [];
+  if (outlineMeta?.threads) chapterMetaParts.push(`Tuyến phụ tạo ma sát: ${outlineMeta.threads}`);
+  if (outlineMeta?.anchors) chapterMetaParts.push(`Neo bối cảnh cụ thể: ${outlineMeta.anchors}`);
+  if (isLast && outlineMeta?.hook?.line) chapterMetaParts.push(`Hook khép chương (${outlineMeta.hook.type || 'open'}): ${outlineMeta.hook.line}`);
+
   const userPrompt = `Viết Cảnh ${scene.index}/${totalScenes} của Chương ${chapterNumber} (độ dài mục tiêu: 900-1.100 từ tiếng Việt).
 Mục tiêu cảnh: ${scene.goal}
 ${prefsDirective ? `${prefsDirective}\n` : ''}Chi tiết: ${scene.beats}
-Trạng thái hiện tại (L2): ${l2Str}${recurringNpcText ? `\n${recurringNpcText}` : ''}
+${sceneMetaParts.length ? `${sceneMetaParts.join(' | ')}\n` : ''}${chapterMetaParts.length ? `${chapterMetaParts.join(' | ')}\n` : ''}Trạng thái hiện tại (L2): ${l2Str}${recurringNpcText ? `\n${recurringNpcText}` : ''}
 Tóm tắt gần nhất (L3): ${l3.recentText || 'Chương mở đầu'}
-${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
+${prevExitState ? `Trạng thái bắt buộc nối tiếp từ cảnh trước: ${prevExitState}\n` : ''}${rollingTail ? `Đoạn cuối cảnh trước (viết nối tiếp mượt mà, không lặp lại):\n"""\n${rollingTail}\n"""` : ''}
 Lời thoại CHỈ viết dạng Tên: lời thoại, một câu một dòng — KHÔNG viết thoại trong ngoặc kép kiểu văn xuôi, KHÔNG đổi dạng giữa chừng.
 ${addressingLine ? `${addressingLine}` : ''}
 ${linterNotes.length ? `LƯU Ý SỬA PHONG CÁCH:\n- ${linterNotes.join('\n- ')}` : ''}
-${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng một dư âm hoặc móc nối mở.' : 'KHÔNG được kết thúc chương ở cảnh này, chỉ dừng ở điểm chuyển cảnh tự nhiên.'}`;
+${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng đúng hook đã định, không giải thích chủ đề.' : 'KHÔNG được kết thúc chương ở cảnh này, chỉ dừng ở đúng trạng thái kết cảnh để viết tiếp.'}`;
 
   let text = await window.RequestQueue.enqueue({
     lane: 'writer',
@@ -509,6 +672,12 @@ async function writeNextChapter({
       const sceneL1 = await window.StoryMemory.getL1HardCanon(sceneQuery, true);
 
       onStatus(`Chương ${chapterNumber}: Đang viết cảnh ${i + 1}/${totalScenesCount}...`);
+      const prevExitState = i > 0 ? String(outline.scenes[i - 1]?.exitState || '').trim() : '';
+      const outlineMeta = {
+        threads: outline.threads || '',
+        anchors: outline.anchors || '',
+        hook: outline.hook || null
+      };
       const sceneText = await writeSingleScene({
         chapterNumber,
         scene,
@@ -517,6 +686,8 @@ async function writeNextChapter({
         l2,
         l3,
         rollingTail,
+        prevExitState,
+        outlineMeta,
         linterNotes,
         signal,
         prefsDirective,
