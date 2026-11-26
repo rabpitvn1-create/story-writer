@@ -669,6 +669,15 @@ function fixVerifiedLexicalTypos(text) {
   return out;
 }
 
+// 1 nguồn chân lý duy nhất cho tic Lớp C: lintScene + editChapterFinal cùng dùng (tránh lệch đồng bộ).
+const TIC_STOPWORDS = new Set([
+  'không', 'được', 'trong', 'ngoài', 'trên', 'dưới', 'một', 'những', 'các', 'của', 'với', 'cho', 'như',
+  'nhưng', 'rồi', 'cũng', 'vẫn', 'đang', 'đã', 'sẽ', 'lại', 'này', 'đó', 'kia', 'khi', 'nơi', 'lúc',
+  'cả', 'chỉ', 'có', 'là', 'ở', 'ra', 'vào', 'lên', 'xuống', 'đi', 'đến', 'về', 'từ', 'qua', 'theo',
+  'hắn', 'cô', 'anh', 'em', 'tôi', 'người', 'mình', 'họ', 'nó', 'ông', 'bà', 'chú', 'bác', 'cậu', 'mà', 'thì', 'và', 'hay'
+]);
+const TIC_SINGLE_WATCH = ['hụm', 'phụt'];
+
 // JS Style Linter chạy cục bộ (0 API call)
 function lintScene(text, options = {}) {
   const warnings = [];
@@ -782,14 +791,7 @@ function lintScene(text, options = {}) {
   // Không cảnh báo lặp âm tiết: bộ đếm dup dương tính giả cao trên văn thật (từ láy hợp lệ, trùng âm tiết qua ranh giới từ) — chỉ dùng để đo.
 
   // Chống lặp Lớp C giữa các cảnh: phát hiện cụm/từ miêu tả lặp ≥3 lần, đẩy cảnh báo vào linterNotes cho cảnh sau
-  const TIC_STOPWORDS = new Set([
-    'không', 'được', 'trong', 'ngoài', 'trên', 'dưới', 'một', 'những', 'các', 'của', 'với', 'cho', 'như',
-    'nhưng', 'rồi', 'cũng', 'vẫn', 'đang', 'đã', 'sẽ', 'lại', 'này', 'đó', 'kia', 'khi', 'nơi', 'lúc',
-    'cả', 'chỉ', 'có', 'là', 'ở', 'ra', 'vào', 'lên', 'xuống', 'đi', 'đến', 'về', 'từ', 'qua', 'theo',
-    'hắn', 'cô', 'anh', 'em', 'tôi', 'người', 'mình', 'họ', 'nó', 'ông', 'bà', 'chú', 'bác', 'cậu', 'mà', 'thì', 'và', 'hay'
-  ]);
-  const TIC_SINGLE_WATCH = ['hụm', 'phụt'];
-
+  // (TIC_STOPWORDS / TIC_SINGLE_WATCH hoist lên module scope để editChapterFinal dùng chung — 1 nguồn chân lý.)
   const ticHits = [];
   const lowerNarration = strippedQuotes.toLowerCase();
   const wordsArr = lowerNarration.match(/[\p{L}]+/gu) || [];
@@ -817,6 +819,196 @@ function lintScene(text, options = {}) {
     });
 
   return warnings;
+}
+
+// Lớp biên tập cuối JS thuần (0 call, 0 token).
+// GIỚI HẠN: chỉ sửa mối nối lặp câu + cắt câu kết dở dang; tic/cảnh 3/lexical CHỈ BÁO không sửa;
+// không xử lý vênh ký ức ngữ nghĩa (thuộc nhánh model có điều kiện ở vòng sau).
+// Lõi kiểm & sửa: seam-dup, incomplete-ending, scene3, deadCharacters/lostItems (cờ [sự-thật] vào unresolvedFlags).
+// Nhánh phụ crossSceneReport (chỉ đo, không trộn vào unresolvedFlags): tics xuyên cảnh + countLexicalIssues.
+function editChapterFinal(sceneTexts, options = {}) {
+  if (!Array.isArray(sceneTexts) || sceneTexts.length === 0) {
+    return {
+      finalText: '',
+      edits: [],
+      crossSceneReport: { tics: [], lexical: countLexicalIssues(''), scene3: { checked: false, issues: [] } },
+      unresolvedFlags: [],
+      differsFromStream: false,
+      streamDiffNote: ''
+    };
+  }
+
+  const { outline = null, l2 = null, mainChar = null } = options || {};
+  const scenes = sceneTexts.map((s) => String(s || ''));
+  const edits = [];
+  const unresolvedFlags = [];
+
+  // (a1) Vá mối nối: cắt câu lặp trùng nguyên văn giữa cuối cảnh i và đầu cảnh i+1
+  const normSpace = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const extractLastSentence = (txt) => {
+    const lines = String(txt || '').trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return '';
+    const lastLine = lines[lines.length - 1];
+    const matches = lastLine.match(/[^.!?…]+[.!?…]+["”»)]*/gu);
+    return matches && matches.length > 0 ? matches[matches.length - 1].trim() : '';
+  };
+
+  for (let i = 0; i < scenes.length - 1; i++) {
+    const lastSent = extractLastSentence(scenes[i]);
+    if (!lastSent || lastSent.length < 4) continue;
+    const nextTrimmed = scenes[i + 1].trimStart();
+    const firstMatch = nextTrimmed.match(/^([^\n.!?…]+[.!?…]+["”»)]*)/u);
+    if (!firstMatch) continue;
+    const firstSent = firstMatch[1].trim();
+    if (normSpace(lastSent) === normSpace(firstSent)) {
+      const rest = nextTrimmed.slice(firstMatch[0].length).replace(/^[ \t]+/, '').replace(/^\n+/, '');
+      scenes[i + 1] = rest;
+      edits.push({
+        type: 'seam-dup',
+        find: firstSent,
+        replace: '',
+        reason: `Cắt câu trùng ở mối nối Cảnh ${i + 1}→${i + 2}`
+      });
+    }
+  }
+
+  let finalText = scenes.join('\n\n');
+
+  // (a2) Xác nhận câu kết toàn chương có dấu kết câu
+  // WHY: trimIncompleteEnding nằm nội bộ trong chapter.js:31 (không export sang memory.js) nên lặp lại đúng logic cắt >70% ở đây.
+  const trimmedFull = finalText.trim();
+  if (trimmedFull && !/[.!?…]["”»)]*$/u.test(trimmedFull)) {
+    const lastIdx = Math.max(
+      trimmedFull.lastIndexOf('.'),
+      trimmedFull.lastIndexOf('!'),
+      trimmedFull.lastIndexOf('?'),
+      trimmedFull.lastIndexOf('…')
+    );
+    if (lastIdx > 0) {
+      let cutPos = lastIdx + 1;
+      while (cutPos < trimmedFull.length && /["”»)]/.test(trimmedFull[cutPos])) cutPos++;
+      if (cutPos > trimmedFull.length * 0.7) {
+        const removedTail = trimmedFull.slice(cutPos).trim();
+        finalText = trimmedFull.slice(0, cutPos).trim();
+        edits.push({
+          type: 'incomplete-ending',
+          find: removedTail,
+          replace: '',
+          reason: 'Cắt phần câu dở dang cuối chương về dấu kết câu gần nhất'
+        });
+      }
+    }
+  }
+
+  // (a3) Kiểm cơ học deadCharacters / lostItems trên finalText — CHỈ BÁO, không tự xóa
+  // WHY: L2 là sự thật đã khóa; người đã chết xuất hiện lại hay đồ đã mất dùng lại thì gắn cờ [sự-thật] để soát.
+  // shortcut: JS không phân biệt "xuất hiện" với "nhắc trong hồi tưởng" nên chỉ báo cờ, không chặn lưu.
+  const escRe = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const normFinal = normSpace(finalText);
+  const checkNameInText = (name) => {
+    const n = normSpace(name);
+    if (!n) return false;
+    return new RegExp(`(?<![\\p{L}\\p{N}_])${escRe(n)}(?![\\p{L}\\p{N}_])`, 'iu').test(normFinal);
+  };
+  for (const name of (Array.isArray(l2?.deadCharacters) ? l2.deadCharacters : []).filter(Boolean)) {
+    if (checkNameInText(name)) {
+      unresolvedFlags.push(`[sự-thật] Nhân vật đã chết "${normSpace(name)}" xuất hiện lại trong chương (có thể chỉ là nhắc trong hồi tưởng — cần soát).`);
+    }
+  }
+  for (const item of (Array.isArray(l2?.lostItems) ? l2.lostItems : []).filter(Boolean)) {
+    if (checkNameInText(item)) {
+      unresolvedFlags.push(`[sự-thật] Đồ đã mất "${normSpace(item)}" xuất hiện lại trong chương (có thể chỉ là nhắc lại — cần soát).`);
+    }
+  }
+
+  // (b1) Tic cộng dồn toàn chương (>=3 trên cả 3 cảnh gộp) — CHỈ ĐO, ghi vào crossSceneReport, không trộn vào unresolvedFlags
+  const nonDialogueAll = finalText
+    .split('\n')
+    .filter((l) => !/^[A-ZÀ-Ỹ][\wÀ-ỹ\s]{0,24}:\s+/.test(l.trim()))
+    .join(' ')
+    .replace(/["“][^"”]*["”]/g, '')
+    .toLowerCase();
+
+  const wordsAll = nonDialogueAll.match(/[\p{L}]+/gu) || [];
+  const bigramCounts = new Map();
+  for (let wi = 0; wi < wordsAll.length - 1; wi++) {
+    const w1 = wordsAll[wi];
+    const w2 = wordsAll[wi + 1];
+    if (w1.length < 2 || w2.length < 2) continue;
+    if (TIC_STOPWORDS.has(w1) || TIC_STOPWORDS.has(w2)) continue;
+    const bg = `${w1} ${w2}`;
+    bigramCounts.set(bg, (bigramCounts.get(bg) || 0) + 1);
+  }
+
+  const tics = [];
+  for (const [phrase, count] of bigramCounts.entries()) {
+    if (count >= 3) tics.push({ phrase, count });
+  }
+  for (const sw of TIC_SINGLE_WATCH) {
+    const count = (nonDialogueAll.match(new RegExp(`(?<![\\p{L}\\p{N}_])${sw}(?![\\p{L}\\p{N}_])`, 'giu')) || []).length;
+    if (count >= 3) tics.push({ phrase: sw, count });
+  }
+  tics.sort((a, b) => b.count - a.count);
+
+  // (b2) Tổng hợp countLexicalIssues trên toàn văn chương — CHỈ ĐO, ghi vào crossSceneReport
+  const lexical = countLexicalIssues(finalText);
+
+  // (b3) Soát riêng cảnh 3 (cảnh cuối không có cảnh sau nhận linterNotes): POV, thoại "Tên: ...", xưng hô L2
+  const scene3Issues = [];
+  const lastIdxScene = scenes.length - 1;
+  const scene3Text = scenes[lastIdxScene] || '';
+  const scene3Obj = Array.isArray(outline?.scenes) ? outline.scenes[lastIdxScene] : null;
+  const scene3Query = scene3Obj ? `${scene3Obj.goal || ''} ${scene3Obj.beats || ''}` : scene3Text.slice(0, 400);
+
+  // Tái dùng lintScene ở chế độ chỉ đọc (không sửa văn) để kiểm POV, thoại ngoặc kép và xưng hô L2
+  const s3Lint = lintScene(scene3Text, {
+    mainChar,
+    relationships: l2?.relationships,
+    sceneQuery: scene3Query
+  });
+  for (const w of s3Lint) {
+    if (/ngôi thứ nhất|trượt sang|ngoặc kép|Xưng hô/i.test(w)) {
+      scene3Issues.push(w);
+    }
+  }
+  // Kiểm tra bổ sung cho mọi đại từ POV khác "hắn" (VD: "cô", "cậu", "anh") nếu bị mất hẳn trên cảnh 3
+  const povP = mainChar?.narratorPronoun ? String(mainChar.narratorPronoun).trim().toLowerCase() : '';
+  if (povP && povP !== 'hắn') {
+    const s3Narration = scene3Text
+      .split('\n')
+      .filter((l) => !/^[A-ZÀ-Ỹ][\wÀ-ỹ\s]{0,24}:\s+/.test(l.trim()))
+      .join(' ')
+      .replace(/["“][^"”]*["”]/g, '');
+    const povRe = new RegExp(`(?<![\\p{L}\\p{N}_])${povP.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'giu');
+    const otherDriftRe = /(?<![\p{L}\p{N}_])(hắn|anh ấy|anh ta|cô ấy|cô ta)(?![\p{L}\p{N}_])/giu;
+    const povCount = (s3Narration.match(povRe) || []).length;
+    const driftMatches = (s3Narration.match(otherDriftRe) || []).filter((m) => m.toLowerCase() !== povP);
+    if (driftMatches.length >= 2 && driftMatches.length > povCount) {
+      scene3Issues.push(`Cảnh ${lastIdxScene + 1} có dấu hiệu lệch đại từ POV (đã khóa "${povP}", xuất hiện "${driftMatches[0]}" ×${driftMatches.length}).`);
+    }
+  }
+  for (const iss of scene3Issues) {
+    unresolvedFlags.push(`[cảnh-${lastIdxScene + 1}] ${iss}`);
+  }
+
+  // (c) editReport nhẹ + ghi chú lệch với bản stream
+  const differsFromStream = edits.length > 0;
+  const streamDiffNote = differsFromStream
+    ? `Bản lưu đã tự động chỉnh ${edits.length} chỗ nhỏ (mối nối/câu kết) so với bản hiển thị lúc stream.`
+    : '';
+
+  return {
+    finalText,
+    edits,
+    crossSceneReport: {
+      tics,
+      lexical,
+      scene3: { checked: true, issues: scene3Issues }
+    },
+    unresolvedFlags,
+    differsFromStream,
+    streamDiffNote
+  };
 }
 
 // L1 Phân tầng: L1-Core (pinned facts + thẻ lõi tối đa 4 nhân vật) + L1-Dynamic (theo queryContext)
@@ -1108,6 +1300,7 @@ window.StoryMemory = {
   stripRawMarkdown,
   fixVerifiedLexicalTypos,
   isValidVietnameseSyllable,
+  editChapterFinal,
   getL1HardCanon,
   getL2Ledger,
   saveL2Ledger,

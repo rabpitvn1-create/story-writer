@@ -725,10 +725,31 @@ async function writeNextChapter({
       if (gracefulStopRequested) break;
     }
 
-    const fullText = sceneTexts.join('\n\n');
+    let fullText = sceneTexts.join('\n\n');
     if (window.StoryMemory.countWords(fullText) < 500) {
       throw new Error('Chương viết ra quá ngắn (dưới 500 từ), bấm Viết chương tiếp để thử lại — bản nháp đã lưu.');
     }
+
+    let editReport = null;
+    try {
+      if (window.StoryMemory?.editChapterFinal) {
+        const edited = window.StoryMemory.editChapterFinal(sceneTexts, { outline, l2, mainChar });
+        if (edited && typeof edited.finalText === 'string' && edited.finalText.trim().length > 0) {
+          fullText = edited.finalText;
+          editReport = {
+            edits: edited.edits || [],
+            crossSceneReport: edited.crossSceneReport || null,
+            unresolvedFlags: edited.unresolvedFlags || [],
+            differsFromStream: Boolean(edited.differsFromStream),
+            streamDiffNote: edited.streamDiffNote || ''
+          };
+        }
+      }
+    } catch (editErr) {
+      // Fail-closed: giữ nguyên fullText nếu lớp biên tập lỗi, không làm hỏng chương
+      console.warn('[editChapterFinal] Bỏ qua do lỗi:', editErr);
+    }
+
     const chapterRecord = {
       number: chapterNumber,
       title: outline.title || `CHAPTER ${chapterNumber}`,
@@ -736,6 +757,7 @@ async function writeNextChapter({
       blocks: parseTextToBlocks(fullText),
       wordCount: window.StoryMemory.countWords(fullText),
       usage: chapterUsage,
+      ...(editReport ? { editReport } : {}),
       createdAt: Date.now()
     };
 
