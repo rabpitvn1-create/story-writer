@@ -178,7 +178,8 @@ function renderDocxPreview(doc) {
 
 async function refreshSettingsUI() {
   const apiConfig = await window.StoryDB.getSetting('apiConfig', { freeOnlyMode: false, dailyCap: 100 });
-  document.getElementById('free-only-toggle').checked = Boolean(apiConfig.freeOnlyMode);
+  const modelSelect = document.getElementById('model-mode-select');
+  if (!modelSelect.disabled) modelSelect.value = window.KeyPoolManager.resolveModelMode(apiConfig);
   document.getElementById('daily-cap-input').value = apiConfig.dailyCap || 100;
 
   const budget = await window.RequestQueue.getBudgetState();
@@ -203,7 +204,7 @@ async function refreshSettingsUI() {
       const h = Math.floor(remainMin / 60);
       const m = remainMin % 60;
       status.className = 'key-status-cooldown';
-      status.textContent = `Nghỉ 24h — còn ${h}g ${m}p`;
+      status.textContent = `Tạm nghỉ — còn ${h}g ${m}p`;
     } else {
       status.className = 'key-status-ready';
       status.textContent = `Sẵn sàng (${item.requestsToday || 0} calls)`;
@@ -235,6 +236,7 @@ let cooldownTimer = null;
 function startCooldownBanner(resumeAt) {
   const banner = document.getElementById('cooldown-banner');
   if (cooldownTimer) clearInterval(cooldownTimer);
+  cooldownTimer = null;
   if (!resumeAt) {
     banner.classList.add('hidden');
     return;
@@ -244,6 +246,7 @@ function startCooldownBanner(resumeAt) {
     const diff = resumeAt - Date.now();
     if (diff <= 0) {
       clearInterval(cooldownTimer);
+      cooldownTimer = null;
       banner.classList.add('hidden');
       refreshSettingsUI();
       return;
@@ -251,7 +254,7 @@ function startCooldownBanner(resumeAt) {
     const h = String(Math.floor(diff / 3600000)).padStart(2, '0');
     const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0');
     const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0');
-    banner.textContent = `Tất cả API key đang nghỉ 24h. Tự mở khóa sau ${h}:${m}:${s}`;
+    banner.textContent = `Nguồn AI phù hợp đang tạm nghỉ. Thử lại sau ${h}:${m}:${s}`;
     banner.classList.remove('hidden');
   };
   tick();
@@ -1525,17 +1528,36 @@ function setupEvents(settings) {
     document.getElementById('codex-form').classList.add('hidden');
   });
 
-  // Phần 2: Pool Key, công tắc free-only, daily cap, status listener
-  document.getElementById('free-only-toggle').addEventListener('change', async (e) => {
-    const cfg = await window.StoryDB.getSetting('apiConfig', {});
-    cfg.freeOnlyMode = e.target.checked;
-    await window.StoryDB.setSetting('apiConfig', cfg);
+  // Phần 2: Pool Key, lựa chọn model, daily cap, status listener
+  const modelSelect = document.getElementById('model-mode-select');
+  modelSelect.addEventListener('change', async () => {
+    const mode = modelSelect.value;
+    modelSelect.disabled = true;
+    const db = window.StoryDB.db;
+    try {
+      await db.transaction('rw', db.settings, async () => {
+        const cfg = await window.StoryDB.getSetting('apiConfig', {});
+        cfg.modelMode = mode;
+        cfg.freeOnlyMode = mode === 'free';
+        await window.StoryDB.setSetting('apiConfig', cfg);
+      });
+    } catch {
+      modelSelect.disabled = false;
+      await refreshSettingsUI();
+      alert('Không lưu được lựa chọn model. Vui lòng thử lại.');
+    } finally {
+      modelSelect.disabled = false;
+    }
   });
 
   document.getElementById('daily-cap-input').addEventListener('change', async (e) => {
-    const cfg = await window.StoryDB.getSetting('apiConfig', {});
-    cfg.dailyCap = Math.max(10, Number(e.target.value) || 100);
-    await window.StoryDB.setSetting('apiConfig', cfg);
+    const cap = Math.max(10, Number(e.target.value) || 100);
+    const db = window.StoryDB.db;
+    await db.transaction('rw', db.settings, async () => {
+      const cfg = await window.StoryDB.getSetting('apiConfig', {});
+      cfg.dailyCap = cap;
+      await window.StoryDB.setSetting('apiConfig', cfg);
+    });
     await refreshSettingsUI();
   });
 
@@ -1552,11 +1574,13 @@ function setupEvents(settings) {
 
   window.RequestQueue.setStatusListener((state) => {
     if (state.type === 'call_started') {
+      startCooldownBanner(null);
       StreamRenderer.startSwitchTimer();
       return;
     }
     if (state.type === 'first_token' || state.type === 'call_ended') {
       StreamRenderer.stopSwitchTimer();
+      if (state.type === 'call_ended' && !cooldownTimer) startCooldownBanner(null);
       return;
     }
     if (state.type === 'waiting') {
@@ -1570,6 +1594,11 @@ function setupEvents(settings) {
     } else if (state.type === 'all_cooldown') {
       startCooldownBanner(state.resumeAt);
       refreshSettingsUI();
+    } else if (state.type === 'premium_fallback') {
+      startCooldownBanner(null);
+      const banner = document.getElementById('cooldown-banner');
+      banner.textContent = 'Lượt này đang dùng Premium thay cho Free.';
+      banner.classList.remove('hidden');
     } else if (state.type === 'waiting') {
       const banner = document.getElementById('cooldown-banner');
       banner.textContent = `${state.reason} — tự thử lại sau ${state.waitSec}s...`;
