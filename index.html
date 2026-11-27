@@ -208,10 +208,13 @@
         </div>
         <label for="daily-cap-input">Giới hạn tối đa mỗi ngày (calls)</label>
         <input id="daily-cap-input" type="number" min="10" max="2000" value="100" />
-        <label class="toggle-row">
-          <input id="free-only-toggle" type="checkbox" />
-          <span>Chỉ chạy 100% miễn phí (bỏ qua Claude)</span>
-        </label>
+        <label for="model-mode-select">Model viết truyện</label>
+        <select id="model-mode-select">
+          <option value="auto">Tự động — ưu tiên Free</option>
+          <option value="free">Free — Gemini</option>
+          <option value="premium">Premium — Claude</option>
+        </select>
+        <p>Áp dụng từ lượt tiếp theo. Premium dùng Claude viết truyện, tác vụ phụ ưu tiên Free. Khi Free không khả dụng, app có thể dùng Premium.</p>
       </div>
 
       <div class="setting-group setting-divider">

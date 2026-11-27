@@ -148,9 +148,7 @@ async function incrementBudget(usage = null) {
   return next;
 }
 
-async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal, selectOptions, onKeySelected, onBeforeFetch }) {
-  const apiConfig = await window.StoryDB.getSetting('apiConfig', {});
-  const freeOnly = Boolean(apiConfig.freeOnlyMode);
+async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal, selectOptions, onKeySelected, onBeforeFetch }) {
 
   // Kiểm tra ngân sách ngày
   const budget = await getBudgetState();
@@ -160,14 +158,14 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
   }
 
   let transientRetries = 0;
-  let proxy429Retries = 0;
+  const proxy429Retries = new Map();
   let rpmRetriedForKeyId = null;
   let backoffIndex = 0;
 
   while (true) {
-    const keyObj = await window.KeyPoolManager.selectKey(lane, freeOnly, selectOptions || {});
+    const keyObj = await window.KeyPoolManager.selectKey(lane, modelMode, selectOptions || {});
     if (!keyObj) {
-      const earliest = await window.KeyPoolManager.getEarliestReadyTime(lane, freeOnly);
+      const earliest = await window.KeyPoolManager.getEarliestReadyTime(lane, modelMode);
       await window.StoryDB.setSetting('checkpoint', {
         lane,
         pausedAt: Date.now(),
@@ -176,8 +174,8 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
       notifyStatus({ type: 'all_cooldown', resumeAt: earliest });
       throw new Error(
         earliest
-          ? 'Tất cả API key đều đang nghỉ 24h. Đã lưu checkpoint.'
-          : 'Chưa có API key phù hợp trong pool.'
+          ? 'Nguồn AI phù hợp đang tạm nghỉ. Đã lưu tiến độ.'
+          : 'Không có nguồn AI phù hợp với chế độ đang chọn.'
       );
     }
     if (onKeySelected) onKeySelected(keyObj);
@@ -200,6 +198,9 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
 
     let callUsage = null;
     try {
+      if (keyObj.baseUrl && keyObj.provider === 'claude' && !(modelMode === 'premium' && lane === 'writer')) {
+        notifyStatus({ type: 'premium_fallback' });
+      }
       if (onBeforeFetch) onBeforeFetch();
       const result = await window.UnifiedAdapter.callLLM({
         provider: keyObj.provider,
@@ -247,15 +248,24 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
           continue;
         }
 
-        // 429: Proxy dùng chung (baseUrl) chỉ backoff ngắn 15s→30s→60s, KHÔNG khóa 24h
+        // 429: giữ backoff ngắn, nhưng Free liên tục bị giới hạn thì tạm chuyển Premium.
         if (keyObj.baseUrl) {
-          if (proxy429Retries < PROXY_429_BACKOFF_SEC.length) {
-            const waitSec = Math.max(PROXY_429_BACKOFF_SEC[proxy429Retries++], err.retryAfterSec || 0);
-            notifyStatus({ type: 'waiting', reason: 'Máy chủ chung đang đông, tự thử lại', waitSec });
+          const retries = proxy429Retries.get(keyObj.id) || 0;
+          if (keyObj.provider === 'gemini' &&
+              (retries >= PROXY_429_BACKOFF_SEC.length || err.retryAfterSec > 60)) {
+            // shortcut: 429 không phân biệt chắc chắn quota ngày/RPM; nghỉ 5 phút hoặc Retry-After.
+            await window.KeyPoolManager.markCooldown(keyObj.id, Math.max(300, err.retryAfterSec || 0) * 1000);
+            notifyStatus({ type: 'key_rotated', label: keyObj.label });
+            continue;
+          }
+          if (retries < PROXY_429_BACKOFF_SEC.length) {
+            proxy429Retries.set(keyObj.id, retries + 1);
+            const waitSec = Math.max(PROXY_429_BACKOFF_SEC[retries], err.retryAfterSec || 0);
+            notifyStatus({ type: 'waiting', reason: `${keyObj.label} đang bận, tự thử lại`, waitSec });
             await sleep(waitSec * 1000, signal);
             continue;
           }
-          throw new Error('Máy chủ miễn phí đang quá tải tạm thời. Vui lòng thử lại sau ít phút.');
+          throw new Error(`${keyObj.label} đang quá tải tạm thời. Vui lòng thử lại sau ít phút.`);
         }
 
         // 429: Phân biệt giới hạn phút (RPM) vs giới hạn ngày (RPD)
@@ -268,14 +278,14 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
           continue;
         }
 
-        await window.KeyPoolManager.markCooldown24h(keyObj.id);
+        await window.KeyPoolManager.markCooldown(keyObj.id);
         notifyStatus({ type: 'key_rotated', label: keyObj.label });
         continue;
       }
 
       // Proxy hết key ở server (401/403): khóa proxy này 24h rồi xoay sang proxy/key còn lại
       if (keyObj.baseUrl && (err.status === 401 || err.status === 403)) {
-        await window.KeyPoolManager.markCooldown24h(keyObj.id);
+        await window.KeyPoolManager.markCooldown(keyObj.id);
         notifyStatus({ type: 'key_rotated', label: keyObj.label });
         continue;
       }
@@ -290,12 +300,14 @@ async function executeWithPool({ lane, systemPrompt, messages, maxTokens, temper
 async function enqueueWithSwitch(task) {
   const lane = task?.lane || 'writer';
   const chapterSignal = task?.signal || null;
+  const apiConfig = await window.StoryDB.getSetting('apiConfig', {});
+  const modelMode = window.KeyPoolManager.resolveModelMode(apiConfig);
   let switchCount = 0;
 
   while (true) {
     const attemptController = new AbortController();
     const { signal: mergedSignal, cleanup } = combineSignals(chapterSignal, attemptController.signal);
-    const availableCount = await window.KeyPoolManager.countAvailableSources(lane);
+    const availableCount = await window.KeyPoolManager.countAvailableSources(lane, modelMode);
     let fetchDispatched = false;
     let currentKey = null;
     let currentSourceKey = null;
@@ -308,7 +320,7 @@ async function enqueueWithSwitch(task) {
       switchCount,
       hasFirstToken: false,
       isWaiting: false,
-      canSwitch: availableCount >= 2,
+      canSwitch: modelMode === 'auto' && availableCount >= 2,
       attemptController,
       switchedByUser: false
     };
@@ -327,6 +339,9 @@ async function enqueueWithSwitch(task) {
     try {
       const result = await executeWithPool({
         ...task,
+        lane,
+        apiConfig,
+        modelMode,
         signal: mergedSignal,
         onToken: origOnToken ? wrappedOnToken : undefined,
         selectOptions: {

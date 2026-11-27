@@ -31,7 +31,8 @@ async function refreshExpiredCooldowns() {
         window.StoryDB.db.keyPool.update(item.id, {
           status: 'ready',
           cooldownUntil: null,
-          requestsToday: 0
+          ...(item.resetRequestsAfterCooldown !== false ? { requestsToday: 0 } : {}),
+          resetRequestsAfterCooldown: undefined
         })
       );
     }
@@ -40,10 +41,11 @@ async function refreshExpiredCooldowns() {
   return getPool();
 }
 
-async function markCooldown24h(keyId) {
+async function markCooldown(keyId, durationMs = COOLDOWN_24H_MS) {
   await window.StoryDB.db.keyPool.update(keyId, {
     status: 'cooldown',
-    cooldownUntil: Date.now() + COOLDOWN_24H_MS
+    cooldownUntil: Date.now() + durationMs,
+    resetRequestsAfterCooldown: durationMs >= COOLDOWN_24H_MS
   });
 }
 
@@ -56,36 +58,39 @@ async function recordKeySuccess(keyId) {
   });
 }
 
-// Thứ tự ưu tiên cho CẢ HAI LÀN ('writer' và 'utility'):
-// - Free trước: thử pool Gemini miễn phí trước, chỉ dùng Claude khi tất cả key Gemini cạn/cooldown
-// - Nếu bật freeOnlyMode: chỉ dùng ['gemini'], hết Gemini thì dừng đợi
-// - Tự quay lại Gemini ngay khi có bất kỳ key Gemini nào hết cooldown 24h
-// - Chuyển tay giữa chương: nguồn bị bỏ qua xếp cuối danh sách (deprioritized), không loại trừ
-async function getEligibleKeys(lane, freeOnlyMode) {
-  const freeOnly =
-    typeof freeOnlyMode === 'boolean'
-      ? freeOnlyMode
-      : Boolean((await window.StoryDB.getSetting('apiConfig', {}))?.freeOnlyMode);
-  const pool = await refreshExpiredCooldowns();
-  const allowedProviders = freeOnly ? ['gemini'] : ['gemini', 'claude'];
-  const rank = (k) => {
-    const i = allowedProviders.indexOf(k.provider);
-    return i === -1 ? allowedProviders.length : i;
-  };
-  return pool
-    .filter((k) => allowedProviders.includes(k.provider) && k.status === 'ready')
-    .sort((a, b) => rank(a) - rank(b));
+function resolveModelMode(apiConfig) {
+  const mode = apiConfig?.modelMode;
+  return ['auto', 'free', 'premium'].includes(mode)
+    ? mode
+    : apiConfig?.freeOnlyMode ? 'free' : 'auto';
 }
 
-// Đếm số nguồn khả dụng (để nút "Đổi API" chỉ hiện khi có ≥ 2 nguồn)
-async function countAvailableSources(lane, freeOnlyMode) {
-  const eligible = await getEligibleKeys(lane, freeOnlyMode);
+function isAllowedSource(key, lane, modelMode) {
+  if (modelMode !== 'auto' && !key.baseUrl) return false;
+  if (modelMode === 'premium' && lane === 'writer') return key.provider === 'claude';
+  // Free và utility ưu tiên Gemini, dùng Claude khi Gemini không khả dụng.
+  return key.provider === 'gemini' || key.provider === 'claude';
+}
+
+async function getEligibleKeys(lane, modelMode) {
+  const mode = modelMode ?? resolveModelMode(await window.StoryDB.getSetting('apiConfig', {}));
+  const pool = await refreshExpiredCooldowns();
+  return pool
+    .filter((k) => isAllowedSource(k, lane, mode) && k.status === 'ready')
+    .sort((a, b) => Number(a.provider === 'claude') - Number(b.provider === 'claude'));
+}
+
+// Đếm số nguồn khả dụng cho cơ chế Đổi API trong chế độ Tự động.
+async function countAvailableSources(lane, modelMode) {
+  const eligible = await getEligibleKeys(lane, modelMode);
   return new Set(eligible.map((k) => `${k.provider}:${k.id}`)).size;
 }
 
-async function selectKey(lane, freeOnlyMode, options = {}) {
-  const eligible = await getEligibleKeys(lane, freeOnlyMode);
+async function selectKey(lane, modelMode, options = {}) {
+  const mode = modelMode ?? resolveModelMode(await window.StoryDB.getSetting('apiConfig', {}));
+  const eligible = await getEligibleKeys(lane, mode);
   if (eligible.length === 0) return null;
+  if (mode !== 'auto') return eligible[0];
 
   const deprioritizedSet = new Set(
     (Array.isArray(options?.deprioritized) ? options.deprioritized : []).map((s) => String(s || '').trim())
@@ -106,6 +111,7 @@ async function selectKey(lane, freeOnlyMode, options = {}) {
       ordered.find(
         (k) =>
           (String(k.id) === String(stickyId) || `${k.provider}:${k.id}` === String(stickyId)) &&
+          k.provider === ordered[0].provider &&
           !deprioritizedSet.has(`${k.provider}:${k.id}`)
       ) || null;
   }
@@ -116,11 +122,11 @@ async function selectKey(lane, freeOnlyMode, options = {}) {
   return chosen;
 }
 
-async function getEarliestReadyTime(lane, freeOnlyMode) {
+async function getEarliestReadyTime(lane, modelMode) {
+  const mode = modelMode ?? resolveModelMode(await window.StoryDB.getSetting('apiConfig', {}));
   const pool = await getPool();
-  const allowedProviders = freeOnlyMode ? ['gemini'] : ['gemini', 'claude'];
   const candidates = pool.filter(
-    (k) => allowedProviders.includes(k.provider) && k.status === 'cooldown' && k.cooldownUntil
+    (k) => isAllowedSource(k, lane, mode) && k.status === 'cooldown' && k.cooldownUntil
   );
   if (candidates.length === 0) return null;
   return Math.min(...candidates.map((k) => k.cooldownUntil));
@@ -131,8 +137,9 @@ window.KeyPoolManager = {
   addKey,
   removeKey,
   refreshExpiredCooldowns,
-  markCooldown24h,
+  markCooldown,
   recordKeySuccess,
+  resolveModelMode,
   selectKey,
   countAvailableSources,
   getEarliestReadyTime
