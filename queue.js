@@ -210,7 +210,7 @@ async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messa
         sceneIndex: traceSceneIndex,
         modelMode,
         provider: keyObj.provider,
-        sourceLabel: keyObj.provider,
+        sourceLabel: keyObj.builtIn ? keyObj.label : `Custom ${keyObj.provider}`,
         isProxy: Boolean(keyObj.baseUrl),
         fallback: Boolean(keyObj.baseUrl && keyObj.provider === 'claude' && !(modelMode === 'premium' && lane === 'writer')),
         model
