@@ -135,9 +135,9 @@ async function startEndlessMode({ onStatus, onChapterReady, onFinished, onChapte
         onAborted,
         onError,
         onChapterReady: async (ch, graceful) => {
-          chapterCompleted = true;
           gracefulFromEngine = graceful;
           if (onChapterReady) await onChapterReady(ch);
+          chapterCompleted = true;
         }
       });
 
