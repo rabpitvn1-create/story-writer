@@ -117,7 +117,7 @@ function setLatestOutline(chapterNumber, outline) {
   latestOutline = {
     chapterNumber,
     capturedAt: new Date().toISOString(),
-    outline: structuredClone(outline)
+    outline: JSON.parse(JSON.stringify(outline))
   };
   persist();
 }
