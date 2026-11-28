@@ -292,6 +292,8 @@ Trả về ĐÚNG 1 JSON hợp lệ (KHÔNG giải thích thêm):
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = await window.RequestQueue.enqueue({
       lane: 'utility',
+      traceTask: 'outline',
+      traceChapterNumber: chapterNumber,
       systemPrompt: `${l1}\n\nChỉ trả về JSON hợp lệ.`,
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 1800,
@@ -360,6 +362,9 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng đúng hoo
 
   let text = await window.RequestQueue.enqueue({
     lane: 'writer',
+    traceTask: 'scene',
+    traceChapterNumber: chapterNumber,
+    traceSceneIndex: scene.index,
     systemPrompt,
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens: 4096,
@@ -382,6 +387,9 @@ ${isLast ? 'Đây là cảnh cuối chương, hãy khép lại bằng đúng hoo
     let firstExtraChunk = true;
     const extra = await window.RequestQueue.enqueue({
       lane: 'writer',
+      traceTask: 'scene_continuation',
+      traceChapterNumber: chapterNumber,
+      traceSceneIndex: scene.index,
       systemPrompt,
       messages: [
         {
@@ -459,6 +467,8 @@ Nội dung chương:\n${excerpt}`;
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = await window.RequestQueue.enqueue({
       lane: 'utility',
+      traceTask: 'digest',
+      traceChapterNumber: chapterNumber,
       systemPrompt: 'Trả về JSON thuần, ngắn gọn, chính xác.',
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 1800,
@@ -630,6 +640,7 @@ async function writeNextChapter({
       outline = await generateOutline(chapterNumber, outlineL1, l2, l3, l4Hits, signal, '', creativity, userDirection, prefsDirective, trackUsage, isSeedMode);
       await window.StoryDB.setSetting('chapter_draft', { number: chapterNumber, outline, sceneTexts });
     }
+    window.RequestTrace?.setLatestOutline(chapterNumber, outline);
 
     if (onOutlineReady && outline?.title) {
       onOutlineReady(chapterNumber, outline.title);

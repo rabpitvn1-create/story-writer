@@ -11,6 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/dexie@4.4.7/dist/dexie.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.11.0/mammoth.browser.min.js" defer></script>
   <script src="db.js" defer></script>
+  <script src="request-trace.js" defer></script>
   <script src="llm.js" defer></script>
   <script src="keypool.js" defer></script>
   <script src="queue.js" defer></script>
@@ -241,6 +242,12 @@
         <button id="open-import-codex-btn" type="button" class="primary-btn">
           Nhập codex / wiki nhân vật
         </button>
+      </div>
+
+      <div class="setting-group setting-divider">
+        <label for="request-trace-copy-btn">Request Trace</label>
+        <p id="request-trace-status" class="request-trace-status">Chưa có request nào được ghi nhận.</p>
+        <button id="request-trace-copy-btn" type="button" class="step-btn">Sao chép nhật ký</button>
       </div>
 
       <div class="setting-group setting-divider" style="display:flex;flex-direction:column;gap:8px;">

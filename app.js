@@ -1389,6 +1389,21 @@ function setupEvents(settings) {
     await refreshSettingsUI();
   });
 
+  document.getElementById('request-trace-copy-btn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await window.RequestTrace.copy();
+      button.textContent = 'Đã sao chép nhật ký';
+    } catch (err) {
+      const status = document.getElementById('request-trace-status');
+      status.textContent = err.message || 'Không thể sao chép nhật ký.';
+    } finally {
+      button.disabled = false;
+      window.setTimeout(() => { button.textContent = 'Sao chép nhật ký'; }, 2500);
+    }
+  });
+
   document.getElementById('open-import-codex-btn').addEventListener('click', () => {
     settingsModal.classList.add('hidden');
     renderDocxPreview(docxCodex);
@@ -2061,6 +2076,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   applySettings(settings);
+  if (dbReady) await window.RequestTrace?.init();
   try {
     if (dbReady) await loadAndRenderLatestChapter();
     else renderChapter(MOCK_CHAPTER);

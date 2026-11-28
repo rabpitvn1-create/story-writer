@@ -1331,3 +1331,12 @@ button:disabled,
 .role-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .npc-drawer-details { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
 .npc-drawer-details summary { font-size: 13px; font-weight: 600; color: var(--ink-secondary); cursor: pointer; margin-bottom: 8px; }
+
+
+.request-trace-status {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
