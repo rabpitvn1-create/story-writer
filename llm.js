@@ -55,7 +55,7 @@ async function readSSE(response, onLine) {
   if (buffer.trim()) onLine(buffer.trim());
 }
 
-async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, reasoningEffort, onToken, onUsage, signal }) {
+async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, reasoningEffort, onToken, onUsage, onResponseMeta, signal }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
@@ -91,6 +91,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
 
   if (!stream) {
     const data = await res.json();
+    if (onResponseMeta) onResponseMeta({ provider: 'gemini', model: data.modelVersion || data.model || null });
     if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
     return data.choices?.[0]?.message?.content || '';
   }
@@ -102,6 +103,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
     if (payload === '[DONE]') return;
     try {
       const parsed = JSON.parse(payload);
+      if (parsed.modelVersion && onResponseMeta) onResponseMeta({ provider: 'gemini', model: parsed.modelVersion });
       if (onUsage && parsed.usage) onUsage(normalizeUsage(parsed.usage));
       const chunk = parsed.choices?.[0]?.delta?.content || '';
       if (chunk) {
@@ -115,7 +117,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
   return fullText;
 }
 
-async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, onUsage, signal }) {
+async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, stream = true, onToken, onUsage, onResponseMeta, signal }) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     signal,
@@ -144,6 +146,7 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
 
   if (!stream) {
     const data = await res.json();
+    if (onResponseMeta) onResponseMeta({ provider: 'claude', model: data.model || null });
     if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
     return data.content?.[0]?.text || '';
   }
@@ -155,7 +158,10 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
     const payload = line.slice(5).trim();
     try {
       const parsed = JSON.parse(payload);
-      if (parsed.type === 'message_start' && parsed.message?.usage) claudeIn = parsed.message.usage.input_tokens || 0;
+      if (parsed.type === 'message_start' && parsed.message) {
+        if (onResponseMeta) onResponseMeta({ provider: 'claude', model: parsed.message.model || null });
+        if (parsed.message.usage) claudeIn = parsed.message.usage.input_tokens || 0;
+      }
       if (parsed.type === 'message_delta' && parsed.usage && onUsage) {
         onUsage(normalizeUsage({ input_tokens: claudeIn, output_tokens: parsed.usage.output_tokens || 0 }));
       }
@@ -175,7 +181,7 @@ async function callClaude({ apiKey, model, systemPrompt, messages, maxTokens = 4
 
 // Gọi qua proxy có sẵn của anh (Render): proxy giữ key ở server nên app không cần key.
 // Proxy không hỗ trợ streaming — luôn gọi không-stream và đọc full JSON trả về.
-async function callProxy({ baseUrl, provider, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, reasoningEffort, signal, onToken, onUsage }) {
+async function callProxy({ baseUrl, provider, model, systemPrompt, messages, maxTokens = 4096, temperature = 0.85, reasoningEffort, signal, onToken, onUsage, onResponseMeta }) {
   const fullMessages = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages]
     : messages;
@@ -207,6 +213,7 @@ async function callProxy({ baseUrl, provider, model, systemPrompt, messages, max
   }
 
   const data = await res.json();
+  if (onResponseMeta) onResponseMeta({ provider: data.provider || provider, model: data.model || null });
   if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
   const content = data.choices?.[0]?.message?.content || '';
   // Proxy không stream: trả cả cục một lần, nhưng vẫn bắn onToken 1 lần để
