@@ -1384,8 +1384,9 @@ function setupEvents(settings) {
   const setupModal = document.getElementById('setup-modal');
   const tocModal = document.getElementById('toc-modal');
 
-  document.getElementById('settings-btn').addEventListener('click', () => {
+  document.getElementById('settings-btn').addEventListener('click', async () => {
     settingsModal.classList.remove('hidden');
+    await refreshSettingsUI();
   });
 
   document.getElementById('open-import-codex-btn').addEventListener('click', () => {
