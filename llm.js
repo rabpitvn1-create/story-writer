@@ -103,7 +103,7 @@ async function callGeminiOpenAI({ apiKey, model, systemPrompt, messages, maxToke
     if (payload === '[DONE]') return;
     try {
       const parsed = JSON.parse(payload);
-      if (parsed.modelVersion && onResponseMeta) onResponseMeta({ provider: 'gemini', model: parsed.modelVersion });
+      if ((parsed.modelVersion || parsed.model) && onResponseMeta) onResponseMeta({ provider: 'gemini', model: parsed.modelVersion || parsed.model });
       if (onUsage && parsed.usage) onUsage(normalizeUsage(parsed.usage));
       const chunk = parsed.choices?.[0]?.delta?.content || '';
       if (chunk) {
