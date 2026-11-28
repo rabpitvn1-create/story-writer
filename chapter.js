@@ -769,8 +769,16 @@ async function writeNextChapter({
     }
     await window.StoryDB.setSetting('chapter_draft', null);
 
+    if (onChapterReady) {
+      try {
+        await onChapterReady(chapterRecord, gracefulStopRequested);
+      } catch (uiErr) {
+        console.error('[ChapterEngine] Chương đã lưu nhưng cập nhật giao diện thất bại:', uiErr);
+        onStatus(`Chương ${chapterNumber} đã được lưu, nhưng giao diện chưa cập nhật hoàn chỉnh. Hãy tải lại trang để xem chương.`);
+        return;
+      }
+    }
     onStatus(`Hoàn thành Chương ${chapterNumber} (${chapterRecord.wordCount} từ).`);
-    if (onChapterReady) onChapterReady(chapterRecord, gracefulStopRequested);
   } catch (err) {
     if (err.name === 'AbortError') {
       if (outline) {
