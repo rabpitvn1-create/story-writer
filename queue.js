@@ -148,7 +148,7 @@ async function incrementBudget(usage = null) {
   return next;
 }
 
-async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal, selectOptions, onKeySelected, onBeforeFetch }) {
+async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messages, maxTokens, temperature, reasoningEffort, stream, onToken, onUsage, signal, selectOptions, onKeySelected, onBeforeFetch, traceTask, traceChapterNumber, traceSceneIndex }) {
 
   // Kiểm tra ngân sách ngày
   const budget = await getBudgetState();
@@ -197,11 +197,23 @@ async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messa
     }
 
     let callUsage = null;
+    let traceId = null;
     try {
       if (keyObj.baseUrl && keyObj.provider === 'claude' && !(modelMode === 'premium' && lane === 'writer')) {
         notifyStatus({ type: 'premium_fallback' });
       }
-      if (onBeforeFetch) onBeforeFetch();
+      traceId = window.RequestTrace?.start({
+        task: traceTask || lane,
+        lane,
+        chapterNumber: traceChapterNumber,
+        sceneIndex: traceSceneIndex,
+        modelMode,
+        provider: keyObj.provider,
+        sourceLabel: keyObj.label || keyObj.provider,
+        isProxy: Boolean(keyObj.baseUrl),
+        model
+      }) || null;
+      if (onBeforeFetch) onBeforeFetch(traceId);
       const result = await window.UnifiedAdapter.callLLM({
         provider: keyObj.provider,
         apiKey: keyObj.apiKey,
@@ -219,13 +231,18 @@ async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messa
           callUsage = u;
           if (onUsage) onUsage(u);
         },
+        onResponseMeta: (meta) => {
+          if (traceId) window.RequestTrace?.setResponseMeta(traceId, meta);
+        },
         signal
       });
+      if (traceId) window.RequestTrace?.finish(traceId, { usage: callUsage });
       lastCallByBucket.set(bucketKey, Date.now());
       await window.KeyPoolManager.recordKeySuccess(keyObj.id);
       await incrementBudget(callUsage);
       return result;
     } catch (err) {
+      if (traceId) window.RequestTrace?.fail(traceId, err);
       if (err.name === 'AbortError') throw err;
 
       // Mạng chập chờn (rớt kết nối/502/504): thử lại tối đa 2 lần, nghỉ 5s rồi 10s
@@ -342,6 +359,9 @@ async function enqueueWithSwitch(task) {
         lane,
         apiConfig,
         modelMode,
+        traceTask: task?.traceTask,
+        traceChapterNumber: task?.traceChapterNumber,
+        traceSceneIndex: task?.traceSceneIndex,
         signal: mergedSignal,
         onToken: origOnToken ? wrappedOnToken : undefined,
         selectOptions: {
