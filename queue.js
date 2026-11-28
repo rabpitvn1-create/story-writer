@@ -211,6 +211,7 @@ async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messa
         provider: keyObj.provider,
         sourceLabel: keyObj.label || keyObj.provider,
         isProxy: Boolean(keyObj.baseUrl),
+        fallback: Boolean(keyObj.baseUrl && keyObj.provider === 'claude' && !(modelMode === 'premium' && lane === 'writer')),
         model
       }) || null;
       if (onBeforeFetch) onBeforeFetch(traceId);
