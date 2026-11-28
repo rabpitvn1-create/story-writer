@@ -97,7 +97,7 @@ function fail(id, error) {
     durationMs: Math.max(0, finishedAt - Date.parse(event.startedAt)),
     error: {
       name: String(error?.name || 'Error'),
-      message: String(error?.message || error || 'Unknown error').slice(0, 500),
+      message: Number.isFinite(error?.status) ? `HTTP ${error.status}` : error?.name === 'AbortError' ? 'Đã hủy request' : 'Lỗi mạng hoặc request',
       status: Number.isFinite(error?.status) ? error.status : null
     }
   });
