@@ -100,6 +100,7 @@ async function suggestRolesWithAI(characters) {
   }));
   const raw = await window.RequestQueue.enqueue({
     lane: 'utility',
+    traceTask: 'codex_roles',
     systemPrompt: 'Phân loại vai trò nhân vật thành JSON thuần: {"roles": {"0": "protagonist|ally|antagonist|supporting"}}. Chỉ đúng 1 protagonist.',
     messages: [{ role: 'user', content: JSON.stringify(items) }],
     maxTokens: 800,
@@ -621,6 +622,7 @@ ${text.slice(0, 14000)}`;
 
   const raw = await window.RequestQueue.enqueue({
     lane: 'utility',
+    traceTask: 'codex_import',
     systemPrompt: 'Bạn là bộ trích xuất dữ liệu JSON chính xác. Chỉ trả về JSON thuần.',
     messages: [{ role: 'user', content: prompt }],
     maxTokens: 3000,
