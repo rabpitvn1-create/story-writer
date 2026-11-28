@@ -198,6 +198,7 @@ async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messa
 
     let callUsage = null;
     let traceId = null;
+    let traceFinished = false;
     try {
       if (keyObj.baseUrl && keyObj.provider === 'claude' && !(modelMode === 'premium' && lane === 'writer')) {
         notifyStatus({ type: 'premium_fallback' });
@@ -237,13 +238,16 @@ async function executeWithPool({ lane, apiConfig, modelMode, systemPrompt, messa
         },
         signal
       });
-      if (traceId) window.RequestTrace?.finish(traceId, { usage: callUsage });
+      if (traceId) {
+        window.RequestTrace?.finish(traceId, { usage: callUsage });
+        traceFinished = true;
+      }
       lastCallByBucket.set(bucketKey, Date.now());
       await window.KeyPoolManager.recordKeySuccess(keyObj.id);
       await incrementBudget(callUsage);
       return result;
     } catch (err) {
-      if (traceId) window.RequestTrace?.fail(traceId, err);
+      if (traceId && !traceFinished) window.RequestTrace?.fail(traceId, err);
       if (err.name === 'AbortError') throw err;
 
       // Mạng chập chờn (rớt kết nối/502/504): thử lại tối đa 2 lần, nghỉ 5s rồi 10s
