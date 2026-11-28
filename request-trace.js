@@ -49,6 +49,7 @@ function start(details) {
     provider: details.provider || 'unknown',
     sourceLabel: details.sourceLabel || '',
     isProxy: Boolean(details.isProxy),
+    fallback: Boolean(details.fallback),
     modelSent: details.model || '',
     status: 'dispatched',
     responseModel: null,
