@@ -213,7 +213,7 @@ async function callProxy({ baseUrl, provider, model, systemPrompt, messages, max
   }
 
   const data = await res.json();
-  if (onResponseMeta) onResponseMeta({ provider: data.provider || provider, model: data.model || null });
+  if (onResponseMeta) onResponseMeta({ provider: data.provider || null, model: data.model || null });
   if (onUsage && data.usage) onUsage(normalizeUsage(data.usage));
   const content = data.choices?.[0]?.message?.content || '';
   // Proxy không stream: trả cả cục một lần, nhưng vẫn bắn onToken 1 lần để
